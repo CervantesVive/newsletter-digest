@@ -182,13 +182,26 @@ independently verifiable/rollback-able (revert the phase's commit).
   hardening from the adversarial review pass (mbox-line misdetection, whole-email-transaction
   atomicity on partial failure, malformed-JSON handling). All HIGH/MEDIUM review findings fixed.
 
-**Phase 3 — Enrichment worker (LLM provider port)**
+**Phase 3 — Enrichment worker (LLM provider port) — ✅ DONE**
 - Input: Phase 2's `links` rows. Output: `server/enrich.js`, `server/config.js` (env-driven
   OpenAI-compatible client pointed at LiteLLM).
 - Test first: mock LLM client, assert single-source-with-summary path skips synthesis,
   multi-source path sends all extracted summaries, failure path increments `enrich_attempts`
   and sentinel-stops after 5.
 - Rollback: revert commit; enrichment is additive/idempotent (safe to disable the loop).
+- Summary: `server/enrich.js` exports `runEnrichmentPass(db, {client, model, concurrency,
+  maxAttempts})` (selects links with ≥1 processed source and `enriched_at IS NULL`, bounded
+  worker-pool concurrency, one LLM call per link built from headline + source names +
+  extracted summaries with different prompt wording for zero/one/many-source cases) and
+  `startEnrichmentLoop` (setInterval wrapper with an overlap guard). `server/config.js` gained
+  `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`/`ENRICHMENT_*` env vars (clamped to sane minimums).
+  `server/index.js` wires a real `openai`-package client against the configured endpoint, or
+  disables the loop with a warning if unconfigured. 36 tests total (12 new in
+  `enrich.test.js`) cover the prompt-shape branching, retry/sentinel behavior, bounded
+  concurrency, and — after the adversarial review pass — an in-process double-processing
+  guard, topic normalization, and config clamping. All HIGH/MEDIUM review findings fixed.
+  **Gotcha for Phase 4:** `enriched_at` is tri-state (NULL/date/`'gave_up'` sentinel) — see
+  AGENTS.md.
 
 **Phase 4 — Read API (`GET /api/links` with search/group/hideRead)**
 - Input: enriched `links` table. Output: `server/api.js` read routes.

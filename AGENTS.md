@@ -67,6 +67,27 @@ docs/plan/ Design docs and implementation plans
   tracking params (`ref`, `fbclid`, `gclid`, etc.), the fragment, and a trailing slash (except
   root `/`) — extend the tracking-param list here if new newsletter senders show up with other
   tracking params, don't scope-creep into a full tracking-param database.
+- **`links.headline`** is seeded from the anchor's own link text on first-insert only
+  (`INSERT OR IGNORE` protects it from being clobbered by later re-mentions of the same
+  URL). There's no page-fetching in this app, so anchor text is the only title-like signal
+  available at ingest time — the enrichment LLM call (Phase 3) consumes this as-is, it does
+  not currently rewrite/improve the headline itself, only `summary`/`topics`/`read_time`.
+- **Phase 3 (`server/enrich.js`, `server/config.js`)**: `links.enriched_at` is tri-state, not
+  binary — `NULL` (pending), a real ISO datetime (enriched), or the literal string
+  `'gave_up'` (`ENRICHMENT_SENTINEL`, exported from `enrich.js`) after `enrich_attempts`
+  hits `ENRICHMENT_MAX_ATTEMPTS` failures. **Phase 4's read API must not treat
+  `enriched_at IS NOT NULL` as "has a summary" — a gave-up link has `summary`/`read_time`
+  still NULL and should render as "Uncategorized"/ungrouped, matching the design doc.**
+  `runEnrichmentPass` guards itself against double-processing the same link if two passes
+  overlap in the same process (a module-level in-flight `Set`, since this app is
+  single-process by design — see the ingestion note above; it does not defend against a
+  second OS process, which the architecture doesn't support anyway). The LLM client is
+  injected (`{client, model}`), never constructed inside `enrich.js` itself — `server/index.js`
+  builds the real `openai`-package client pointed at `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`
+  env vars, and the enrichment loop is simply disabled (with a startup warning) if
+  `LLM_BASE_URL`/`LLM_MODEL` aren't set, rather than crashing. Topics from the LLM are
+  trimmed/lowercased/deduped before insert — don't assume `link_topics.topic` preserves the
+  LLM's original casing.
 
 ## Conventions
 

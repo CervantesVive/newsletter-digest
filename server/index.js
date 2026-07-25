@@ -1,7 +1,18 @@
 const express = require('express');
+const OpenAI = require('openai');
 const { openDb } = require('./db');
 const { ingestEmails } = require('./ingest');
-const { DB_PATH, PORT } = require('./config');
+const { startEnrichmentLoop } = require('./enrich');
+const {
+  DB_PATH,
+  PORT,
+  LLM_BASE_URL,
+  LLM_API_KEY,
+  LLM_MODEL,
+  ENRICHMENT_INTERVAL_MS,
+  ENRICHMENT_CONCURRENCY,
+  ENRICHMENT_MAX_ATTEMPTS,
+} = require('./config');
 
 function createApp(db) {
   const app = express();
@@ -36,6 +47,20 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`newsletter-digest listening on :${PORT}`);
   });
+
+  if (LLM_BASE_URL && LLM_MODEL) {
+    const client = new OpenAI({ baseURL: LLM_BASE_URL, apiKey: LLM_API_KEY || 'unused' });
+    startEnrichmentLoop(db, {
+      client,
+      model: LLM_MODEL,
+      intervalMs: ENRICHMENT_INTERVAL_MS,
+      concurrency: ENRICHMENT_CONCURRENCY,
+      maxAttempts: ENRICHMENT_MAX_ATTEMPTS,
+    });
+    console.log(`enrichment loop started against ${LLM_BASE_URL} (model: ${LLM_MODEL})`);
+  } else {
+    console.warn('LLM_BASE_URL/LLM_MODEL not set — enrichment loop disabled, links will stay unenriched');
+  }
 }
 
 module.exports = { createApp };
