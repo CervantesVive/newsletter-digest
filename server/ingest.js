@@ -105,7 +105,7 @@ async function ingestOne(db, rawInput) {
      VALUES (?, ?, ?, ?, ?, ?)`
   );
   const insertLink = db.prepare(
-    `INSERT OR IGNORE INTO links (url_normalized, url_original) VALUES (?, ?)`
+    `INSERT OR IGNORE INTO links (url_normalized, url_original, headline) VALUES (?, ?, ?)`
   );
   const selectLink = db.prepare(`SELECT id FROM links WHERE url_normalized = ?`);
   const insertSource = db.prepare(
@@ -132,7 +132,7 @@ async function ingestOne(db, rawInput) {
 
     const emailId = info.lastInsertRowid;
     for (const link of links) {
-      insertLink.run(link.urlNormalized, link.urlOriginal);
+      insertLink.run(link.urlNormalized, link.urlOriginal, link.extractedSummary);
       const { id: linkId } = selectLink.get(link.urlNormalized);
       insertSource.run(linkId, emailId, link.extractedSummary);
     }

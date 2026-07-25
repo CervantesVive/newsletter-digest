@@ -174,6 +174,29 @@ test('non-http(s) links (mailto, tel, javascript, anchors) are ignored', async (
   db.close();
 });
 
+test('a new link is seeded with the anchor text as its headline (first-seen wins)', async () => {
+  const db = tmpDb();
+  const rawA = mime({
+    messageId: '<headline-a@example.com>',
+    html: '<a href="https://example.com/headline?utm_source=x">Anthropic ships Claude 5</a>',
+  });
+  const rawB = mime({
+    messageId: '<headline-b@example.com>',
+    html: '<a href="https://example.com/headline/?ref=y">A completely different anchor text</a>',
+  });
+
+  await ingestEmails(db, [{ raw_mime: rawA }]);
+  const link = db.prepare('SELECT * FROM links WHERE url_normalized = ?').get('https://example.com/headline');
+  assert.equal(link.headline, 'Anthropic ships Claude 5');
+
+  // re-mentioning the same URL from a different email must not clobber the first headline
+  await ingestEmails(db, [{ raw_mime: rawB }]);
+  const linkAfter = db.prepare('SELECT * FROM links WHERE url_normalized = ?').get('https://example.com/headline');
+  assert.equal(linkAfter.headline, 'Anthropic ships Claude 5');
+
+  db.close();
+});
+
 test('mbox-style leading line does not cause raw MIME text to be misdetected as base64', async () => {
   const db = tmpDb();
   const raw =
