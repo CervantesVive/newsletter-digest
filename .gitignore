@@ -1,6 +1,6 @@
 .serena/
 .remember/
 .idea/
-data/*.sqlite
+data/*.sqlite*
 node_modules/
 .env

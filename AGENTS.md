@@ -52,6 +52,21 @@ docs/plan/ Design docs and implementation plans
   `ON DELETE` behavior is defined anywhere (nothing in the app ever deletes emails/links rows today
   — dismiss is a flag) — if a future retention/cleanup job needs to delete old rows, decide
   cascade/restrict behavior then, don't assume `NO ACTION` will do the right thing.
+- **Phase 2 (`server/ingest.js`, `server/index.js`)**: `raw_mime` may be raw MIME text or
+  base64 per the ingestion port contract; detection checks for known MIME header names
+  anywhere in the text (multiline regex), not just a header-shaped first line — an mbox-style
+  `From alice@x Mon Jan 1...` envelope line (no colon) as the first line is common from some
+  retrievers and must not be misdetected as base64. `ingestOne`'s email insert, link/link_sources
+  writes, and `processed_at` update are one `db.transaction()` — if anything throws partway,
+  the whole email rolls back so a redelivery isn't permanently treated as a duplicate of a
+  half-processed row. `node --test <directory>` (as opposed to an explicit glob) requires
+  **every** `.js` file in that directory as a test file, including `index.js` — which then runs
+  its `require.main === module` startup code and hangs listening on a real port. `npm test`
+  must stay pinned to `node --test server/*.test.js` (or another explicit test-file list), never
+  a bare directory path. URL normalization strips `utm_*`/`mc_*`-prefixed and a fixed set of known
+  tracking params (`ref`, `fbclid`, `gclid`, etc.), the fragment, and a trailing slash (except
+  root `/`) — extend the tracking-param list here if new newsletter senders show up with other
+  tracking params, don't scope-creep into a full tracking-param database.
 
 ## Conventions
 

@@ -166,12 +166,21 @@ independently verifiable/rollback-able (revert the phase's commit).
   Adversarial review pass done; all HIGH/MEDIUM findings resolved except the "no ON DELETE
   behavior" one, deferred as a documented future concern (nothing deletes rows yet).
 
-**Phase 2 — Ingestion endpoint (MIME parse → dedupe → link extraction)**
+**Phase 2 — Ingestion endpoint (MIME parse → dedupe → link extraction) — ✅ DONE**
 - Input: Phase 1's DB. Output: `server/ingest.js`, `POST /ingest` wired into `server/index.js`.
 - Test first: fixture raw MIME emails (including a duplicate `Message-ID` and two emails
   sharing a URL) → assert `emails`/`links`/`link_sources` rows match expectations, response
   shape matches `{results: [...]}`.
 - Rollback: revert commit; DB schema unaffected (additive).
+- Summary: `server/ingest.js` exports `ingestEmails(db, emails)` (MIME parse via mailparser,
+  dedupe via `Message-ID` falling back to `SHA-256(from+subject+body)`, link extraction via
+  cheerio filtered to http/https hrefs, URL normalization stripping tracking params/fragment/
+  trailing slash) and `normalizeUrl`. `server/index.js` wires `POST /ingest` (Express) plus
+  error-handling middleware for malformed-JSON and unexpected errors; `server/config.js` holds
+  `DB_PATH`/`PORT` env config (to be extended with LLM config in Phase 3). 23 tests across
+  `ingest.test.js`/`index.test.js` cover the dedupe/merge/error-isolation/base64 cases plus
+  hardening from the adversarial review pass (mbox-line misdetection, whole-email-transaction
+  atomicity on partial failure, malformed-JSON handling). All HIGH/MEDIUM review findings fixed.
 
 **Phase 3 — Enrichment worker (LLM provider port)**
 - Input: Phase 2's `links` rows. Output: `server/enrich.js`, `server/config.js` (env-driven
