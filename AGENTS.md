@@ -88,6 +88,20 @@ docs/plan/ Design docs and implementation plans
   `LLM_BASE_URL`/`LLM_MODEL` aren't set, rather than crashing. Topics from the LLM are
   trimmed/lowercased/deduped before insert — don't assume `link_topics.topic` preserves the
   LLM's original casing.
+- **Phase 4 (`server/api.js`)**: the design doc's `GET /api/links?group=source|topic|type`
+  mentions a `type` group option, but no `type` column/classification exists anywhere in the
+  schema or enrichment output (only multi-valued `topics`) — this was a leftover from the
+  original static mockup's taxonomy (see `newsletter-data.js`), not something Phase 1–3 ever
+  built. `group=type` (and any value other than `source`/`topic`) intentionally throws a 400
+  rather than silently misbehaving; `type` support is deferred, not implemented, until/unless
+  a future phase adds a real classification signal for it. `group` is case-insensitive.
+  `hideRead` only treats `"true"`/`"1"`/`"yes"` (case-insensitive) as true — everything else,
+  including unset, is false; don't "fix" this to `Boolean(hideRead)` since query strings are
+  always strings and that would make `?hideRead=false` hide reads. `search` escapes literal
+  `%`/`_`/`\` before building the SQL `LIKE` pattern (`ESCAPE '\\'`) so a search for a literal
+  `%` doesn't act as a wildcard. `totalCount`/`unreadCount` are always computed over **all**
+  non-dismissed links, ignoring `search`/`hideRead` — they're meant as stable nav-bar totals,
+  not "N of M results" counts.
 
 ## Conventions
 

@@ -79,3 +79,19 @@ test('POST /ingest with syntactically malformed JSON returns 400 JSON, not a cra
   server.close();
   db.close();
 });
+
+test('GET /api/links is wired and returns the read API shape', async () => {
+  const db = tmpDb();
+  const app = createApp(db);
+  const server = app.listen(0);
+  const { port } = server.address();
+
+  const res = await fetch(`http://127.0.0.1:${port}/api/links`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(Array.isArray(body.groups));
+  assert.equal(typeof body.totalCount, 'number');
+
+  server.close();
+  db.close();
+});

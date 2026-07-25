@@ -3,6 +3,7 @@ const OpenAI = require('openai');
 const { openDb } = require('./db');
 const { ingestEmails } = require('./ingest');
 const { startEnrichmentLoop } = require('./enrich');
+const { createReadRoutes } = require('./api');
 const {
   DB_PATH,
   PORT,
@@ -31,6 +32,8 @@ function createApp(db) {
       next(err);
     }
   });
+
+  app.use(createReadRoutes(db));
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {

@@ -203,11 +203,22 @@ independently verifiable/rollback-able (revert the phase's commit).
   **Gotcha for Phase 4:** `enriched_at` is tri-state (NULL/date/`'gave_up'` sentinel) — see
   AGENTS.md.
 
-**Phase 4 — Read API (`GET /api/links` with search/group/hideRead)**
+**Phase 4 — Read API (`GET /api/links` with search/group/hideRead) — ✅ DONE**
 - Input: enriched `links` table. Output: `server/api.js` read routes.
 - Test first: seed DB with mixed read/dismissed/topic data, assert filter/group/search
   behavior against expected JSON.
 - Rollback: revert commit.
+- Summary: `server/api.js` exports `getLinks(db, {search, group, hideRead})` (always excludes
+  dismissed links; `group` is `source` or `topic` — links appear in every matching group
+  rather than being collapsed to one, per the "don't collapse multi-source/multi-topic"
+  decision; topic-less links land in a synthetic "Uncategorized" group) and
+  `createReadRoutes(db)`, mounted in `server/index.js` as `GET /api/links`. **`group=type` is
+  intentionally unsupported** (400) — the design doc mentioned it but no `type` classification
+  was ever built in Phases 1–3; deferred as a future improvement, not silently faked. 49 tests
+  total (12 new in `api.test.js`) cover filtering/grouping/search plus, after the adversarial
+  review pass, `hideRead` truthy-string parsing edge cases, literal `%`/`_` in search terms,
+  and case-insensitive `group` values. All HIGH/MEDIUM review findings fixed (no SQL injection
+  found — parameters are properly bound throughout).
 
 **Phase 5 — Action API (dismiss/read/mark-saved, bulk variants)**
 - Input: Phase 4's API. Output: additional routes in `server/api.js`.
