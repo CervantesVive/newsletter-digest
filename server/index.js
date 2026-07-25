@@ -1,3 +1,4 @@
+const path = require('node:path');
 const express = require('express');
 const OpenAI = require('openai');
 const { openDb } = require('./db');
@@ -34,6 +35,7 @@ function createApp(db) {
   });
 
   app.use(createReadRoutes(db));
+  app.use(express.static(path.join(__dirname, '..', 'public')));
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {

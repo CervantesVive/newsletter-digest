@@ -236,7 +236,7 @@ independently verifiable/rollback-able (revert the phase's commit).
   benefit; confirmed no read/write race exists (synchronous, single-process) and that dismiss
   permanence is enforced purely at the ingestion layer, not by these routes.
 
-**Phase 6 — Frontend reimplementation**
+**Phase 6 — Frontend reimplementation — ✅ DONE (with one unverified item — see below)**
 - Input: Phases 4–5's API. Output: `public/index.html`, `public/app.js`, config-driven
   Instapaper URL template.
 - Test first: none meaningful to automate beyond a smoke check; manually verify in a
@@ -244,6 +244,25 @@ independently verifiable/rollback-able (revert the phase's commit).
   bulk bar) per the "run" skill.
 - Rollback: revert commit; `NewsletterDigest.dc.html` mockup stays untouched as reference
   until this phase is confirmed working, then can be deleted.
+- Summary: `public/index.html` + `public/app.js` (vanilla JS, reuses `nocturne/` copied into
+  `public/nocturne/`) fetch `GET /api/links` and render cards/groups/bulk-bar directly into
+  the DOM, wired to all Phase 4/5 routes. Dropped: the Obsidian button (per this doc), the
+  static mockup's topic-chip filter row (the group toggle already covers this — kept to
+  Source/Topic, since `type` has no backing data per the Phase 4 note), and any server-side
+  Instapaper call (`window.open` only, per the design). Browser-smoke-tested via a headless
+  Chromium script covering load/group-toggle/search/hideRead/toggle-read/dismiss/bulk-select/
+  bulk-actions — all worked as expected, plus a rapid-double-click race on toggle routes
+  (found in the adversarial review pass and fixed with a shared `runAction()` in-flight
+  guard + error surfacing, since the toggle routes flip state and a double-fire would
+  silently no-op it).
+  **⚠️ Instapaper URL mechanism NOT verified against the live site** (flagged as needing
+  this since the design doc's inception): this remote dev environment's network egress
+  policy blocks arbitrary outbound hosts, confirmed by `curl`ing instapaper.com/google.com
+  and getting 403/connection-reset from the sandbox proxy. Only confirmed: the frontend
+  builds `https://www.instapaper.com/edit?url=<encoded>&title=<encoded>` correctly and calls
+  `window.open`. **Whoever deploys this needs to manually click "Save to Instapaper" once
+  against the real site to confirm the URL/params/cookie-auth flow actually works before
+  relying on it.**
 
 ## Verification (end-to-end)
 

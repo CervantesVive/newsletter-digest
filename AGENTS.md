@@ -115,6 +115,35 @@ docs/plan/ Design docs and implementation plans
   read/saved-state on an already-`dismissed` link is allowed on purpose (dismiss only ever
   touches the `dismissed` column, and the UI has no path to a dismissed id anyway) — don't
   "fix" this by scoping those routes to `WHERE dismissed = 0`, it's tested as intentional.
+- **Phase 6 (`public/index.html`, `public/app.js`)**: full re-fetch-and-rerender on every
+  state change (no client-side optimistic updates, no virtual DOM) — simple and correct
+  given this app's personal scale, don't add a diffing layer unless real latency becomes a
+  problem. Every value interpolated from ingested/LLM content (`headline`, `summary`,
+  `topics`, `sources`, `url`) goes through `escapeHtml()` before landing in a template-string
+  `innerHTML`, including attribute contexts (`href`, `data-url`, `data-headline`) — this is
+  the last line of defense against attacker-controlled forwarded-newsletter content, so any
+  new interpolated field must get the same treatment. `href`/Instapaper-URL safety against
+  `javascript:` etc. relies entirely on Phase 2's server-side `http:`/`https:` protocol
+  filter (`ingest.js`'s `extractLinks`) — there is deliberately no redundant client-side
+  scheme check; if any future code path writes `links.url_original` other than through
+  `extractLinks`, this protection would need re-verifying. `INSTAPAPER_URL_TEMPLATE` is a
+  frontend constant (not a `/api/config` endpoint) per the design doc's "or a frontend config
+  constant" option — simpler, no extra route needed. Single-item `read`/`mark-saved` clicks
+  and all four bulk-bar buttons are routed through a shared `runAction()` wrapper that (a)
+  serializes actions so a rapid double-click on a *toggle* route can't fire two overlapping
+  requests and silently flip the value back to its original state before re-render, and (b)
+  catches/report any action failure via a transient status-bar message — don't strip this
+  wrapper off new action buttons without re-adding equivalent protection. `group=type` is not
+  offered as a frontend option (only Topic/Source buttons) since the API rejects it — see the
+  Phase 4 note above.
+  **⚠️ UNVERIFIED: the Instapaper `instapaper.com/edit?url=&title=` URL mechanism was never
+  smoke-tested against the live site** — this remote dev environment's network policy blocks
+  arbitrary outbound hosts (confirmed via `curl`: instapaper.com and google.com both get a
+  403/connection-reset from the sandbox's egress proxy), so it could only be verified that the
+  frontend builds the documented URL correctly and calls `window.open` — not that Instapaper's
+  actual edit page accepts these query params or that the browser-session-cookie auth flow
+  described in the design doc really works. **Whoever deploys this for real Tailscale/browser
+  use must manually click "Save to Instapaper" once against the live site before trusting it.**
 
 ## Conventions
 
