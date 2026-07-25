@@ -7,7 +7,7 @@ const winston = require('winston');
 const { Writable } = require('node:stream');
 
 const { openDb } = require('./db');
-const { runEnrichmentPass, ENRICHMENT_SENTINEL } = require('./enrich');
+const { runEnrichmentPass, startEnrichmentLoop, ENRICHMENT_SENTINEL } = require('./enrich');
 const { logger } = require('./logger');
 
 function captureLogs() {
@@ -324,5 +324,46 @@ test('one failing link in a batch does not stop the others from being enriched',
   assert.ok(okLink.enriched_at);
   assert.equal(okLink.summary, 'ok');
 
+  db.close();
+});
+
+test('logs enrichment_loop_started and enrichment_loop_stopped', () => {
+  const db = tmpDb();
+  const { entries, stop } = captureLogs();
+  const client = fakeClient(() => jsonResponse({ summary: 's', topics: [], read_time: 1 }));
+
+  const stopLoop = startEnrichmentLoop(db, { client, model: 'test-model', intervalMs: 1000, concurrency: 2 });
+
+  const started = entries.find((e) => e.message === 'enrichment_loop_started');
+  assert.ok(started, 'expected an enrichment_loop_started log entry');
+  assert.equal(started.intervalMs, 1000);
+  assert.equal(started.concurrency, 2);
+
+  stopLoop();
+
+  assert.ok(entries.find((e) => e.message === 'enrichment_loop_stopped'));
+
+  stop();
+  db.close();
+});
+
+test('logs enrichment_loop_stalled when a pass hangs past 5x the interval', (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] });
+  const db = tmpDb();
+  seedLink(db);
+  const { entries, stop } = captureLogs();
+  const hangingClient = { chat: { completions: { create: () => new Promise(() => {}) } } };
+
+  const stopLoop = startEnrichmentLoop(db, { client: hangingClient, model: 'test-model', intervalMs: 1000 });
+
+  t.mock.timers.tick(1000); // first pass starts and hangs
+  t.mock.timers.tick(5000); // 5 more intervals with no completed pass
+
+  const stalled = entries.find((e) => e.message === 'enrichment_loop_stalled');
+  assert.ok(stalled, 'expected an enrichment_loop_stalled log entry');
+  assert.equal(stalled.level, 'error');
+
+  stopLoop();
+  stop();
   db.close();
 });

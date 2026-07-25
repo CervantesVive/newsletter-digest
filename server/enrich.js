@@ -186,18 +186,37 @@ async function runEnrichmentPass(db, { client, model, concurrency = 3, maxAttemp
 
 function startEnrichmentLoop(db, { client, model, intervalMs = 30000, concurrency = 3, maxAttempts = 5 }) {
   let running = false;
+  let lastPassAt = Date.now();
+  let stalled = false;
+  const stallThresholdMs = intervalMs * 5;
+
+  logger.info('enrichment_loop_started', { intervalMs, concurrency });
+
   const timer = setInterval(async () => {
+    if (!stalled && Date.now() - lastPassAt > stallThresholdMs) {
+      stalled = true;
+      logger.error('enrichment_loop_stalled', {
+        minutesSinceLastPass: Math.round((Date.now() - lastPassAt) / 60000),
+      });
+    }
+
     if (running) return;
     running = true;
     try {
       await runEnrichmentPass(db, { client, model, concurrency, maxAttempts });
+      lastPassAt = Date.now();
+      stalled = false;
     } catch (err) {
-      console.error('enrichment pass failed:', err);
+      logger.error('enrichment_pass_failed', { err: err.message, stack: err.stack });
     } finally {
       running = false;
     }
   }, intervalMs);
-  return () => clearInterval(timer);
+
+  return () => {
+    clearInterval(timer);
+    logger.info('enrichment_loop_stopped', {});
+  };
 }
 
 module.exports = {
