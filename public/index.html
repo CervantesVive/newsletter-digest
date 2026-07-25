@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Digest</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+<link rel="stylesheet" href="nocturne/styles.css" />
+</head>
+<body>
+<div style="min-height:100vh; padding-bottom: 96px;">
+
+  <div class="nav" style="position:sticky; top:0; z-index:10; background: color-mix(in srgb, var(--color-bg) 92%, transparent); backdrop-filter: blur(8px); box-shadow: var(--shadow-sm); flex-wrap:wrap;">
+    <span class="nav-brand">Digest</span>
+    <span id="counts" class="text-muted" style="font-size:13px;"></span>
+    <div class="field" style="margin:0 0 0 auto; width:280px;">
+      <input id="search-input" class="input" type="text" placeholder="Search headlines, sources, summaries…" />
+    </div>
+    <div class="seg" id="group-seg" role="group" aria-label="Group by">
+      <button type="button" class="seg-opt" data-group="topic">Topic</button>
+      <button type="button" class="seg-opt" data-group="source">Source</button>
+    </div>
+    <label class="radio" style="font-size:13px;">
+      <input id="hide-read-checkbox" type="checkbox" style="position:static; opacity:1; width:15px; height:15px;" />
+      Hide read
+    </label>
+  </div>
+
+  <div id="status-message" class="text-muted" style="max-width:1160px; margin: var(--space-6) auto 0; padding: 0 var(--space-8); text-align:center; padding-top:80px; padding-bottom:80px; font-size:15px;"></div>
+
+  <div id="groups" style="max-width:1160px; margin: var(--space-6) auto 0; padding: 0 var(--space-8);"></div>
+
+  <div id="bulk-bar" class="elev-lg" style="display:none; position:fixed; bottom: var(--space-6); left:50%; transform:translateX(-50%); background: var(--color-surface); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg); align-items:center; gap: var(--space-3); z-index:20; flex-wrap:wrap; justify-content:center; max-width:calc(100vw - 32px);">
+    <span id="bulk-count" style="font-size:13px; font-weight:600; padding-right:4px;"></span>
+    <button type="button" class="btn btn-primary" id="bulk-instapaper">Save to Instapaper</button>
+    <button type="button" class="btn btn-secondary" id="bulk-read">Mark read</button>
+    <button type="button" class="btn btn-secondary" id="bulk-dismiss">Dismiss</button>
+    <button type="button" class="btn btn-ghost" id="bulk-clear">Clear</button>
+  </div>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>

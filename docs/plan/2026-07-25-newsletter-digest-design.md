@@ -154,39 +154,89 @@ data/
 Each phase is atomic: self-contained inputs/outputs, a failing test written first, and
 independently verifiable/rollback-able (revert the phase's commit).
 
-**Phase 1 — DB schema + migrations**
+**Phase 1 — DB schema + migrations — ✅ DONE**
 - Input: schema above. Output: `server/db.js`, migration applied to a fresh `data/digest.sqlite`.
 - Test first: a test that opens the DB, runs migrations, asserts all tables/columns exist.
 - Rollback: delete `data/digest.sqlite`, revert commit.
+- Summary: `server/db.js` exports `openDb(dbPath)` — idempotent, creates parent dir, opens
+  better-sqlite3 with WAL + `foreign_keys=ON`, runs the schema above (`link_sources`/
+  `link_topics` FK columns tightened to `NOT NULL`, a deviation from this doc's SQL — see
+  AGENTS.md). 10 tests in `server/db.test.js` cover table/column shape, UNIQUE/NOT NULL/FK
+  enforcement, WAL mode actually being active, and data surviving a close/reopen cycle.
+  Adversarial review pass done; all HIGH/MEDIUM findings resolved except the "no ON DELETE
+  behavior" one, deferred as a documented future concern (nothing deletes rows yet).
 
-**Phase 2 — Ingestion endpoint (MIME parse → dedupe → link extraction)**
+**Phase 2 — Ingestion endpoint (MIME parse → dedupe → link extraction) — ✅ DONE**
 - Input: Phase 1's DB. Output: `server/ingest.js`, `POST /ingest` wired into `server/index.js`.
 - Test first: fixture raw MIME emails (including a duplicate `Message-ID` and two emails
   sharing a URL) → assert `emails`/`links`/`link_sources` rows match expectations, response
   shape matches `{results: [...]}`.
 - Rollback: revert commit; DB schema unaffected (additive).
+- Summary: `server/ingest.js` exports `ingestEmails(db, emails)` (MIME parse via mailparser,
+  dedupe via `Message-ID` falling back to `SHA-256(from+subject+body)`, link extraction via
+  cheerio filtered to http/https hrefs, URL normalization stripping tracking params/fragment/
+  trailing slash) and `normalizeUrl`. `server/index.js` wires `POST /ingest` (Express) plus
+  error-handling middleware for malformed-JSON and unexpected errors; `server/config.js` holds
+  `DB_PATH`/`PORT` env config (to be extended with LLM config in Phase 3). 23 tests across
+  `ingest.test.js`/`index.test.js` cover the dedupe/merge/error-isolation/base64 cases plus
+  hardening from the adversarial review pass (mbox-line misdetection, whole-email-transaction
+  atomicity on partial failure, malformed-JSON handling). All HIGH/MEDIUM review findings fixed.
 
-**Phase 3 — Enrichment worker (LLM provider port)**
+**Phase 3 — Enrichment worker (LLM provider port) — ✅ DONE**
 - Input: Phase 2's `links` rows. Output: `server/enrich.js`, `server/config.js` (env-driven
   OpenAI-compatible client pointed at LiteLLM).
 - Test first: mock LLM client, assert single-source-with-summary path skips synthesis,
   multi-source path sends all extracted summaries, failure path increments `enrich_attempts`
   and sentinel-stops after 5.
 - Rollback: revert commit; enrichment is additive/idempotent (safe to disable the loop).
+- Summary: `server/enrich.js` exports `runEnrichmentPass(db, {client, model, concurrency,
+  maxAttempts})` (selects links with ≥1 processed source and `enriched_at IS NULL`, bounded
+  worker-pool concurrency, one LLM call per link built from headline + source names +
+  extracted summaries with different prompt wording for zero/one/many-source cases) and
+  `startEnrichmentLoop` (setInterval wrapper with an overlap guard). `server/config.js` gained
+  `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`/`ENRICHMENT_*` env vars (clamped to sane minimums).
+  `server/index.js` wires a real `openai`-package client against the configured endpoint, or
+  disables the loop with a warning if unconfigured. 36 tests total (12 new in
+  `enrich.test.js`) cover the prompt-shape branching, retry/sentinel behavior, bounded
+  concurrency, and — after the adversarial review pass — an in-process double-processing
+  guard, topic normalization, and config clamping. All HIGH/MEDIUM review findings fixed.
+  **Gotcha for Phase 4:** `enriched_at` is tri-state (NULL/date/`'gave_up'` sentinel) — see
+  AGENTS.md.
 
-**Phase 4 — Read API (`GET /api/links` with search/group/hideRead)**
+**Phase 4 — Read API (`GET /api/links` with search/group/hideRead) — ✅ DONE**
 - Input: enriched `links` table. Output: `server/api.js` read routes.
 - Test first: seed DB with mixed read/dismissed/topic data, assert filter/group/search
   behavior against expected JSON.
 - Rollback: revert commit.
+- Summary: `server/api.js` exports `getLinks(db, {search, group, hideRead})` (always excludes
+  dismissed links; `group` is `source` or `topic` — links appear in every matching group
+  rather than being collapsed to one, per the "don't collapse multi-source/multi-topic"
+  decision; topic-less links land in a synthetic "Uncategorized" group) and
+  `createReadRoutes(db)`, mounted in `server/index.js` as `GET /api/links`. **`group=type` is
+  intentionally unsupported** (400) — the design doc mentioned it but no `type` classification
+  was ever built in Phases 1–3; deferred as a future improvement, not silently faked. 49 tests
+  total (12 new in `api.test.js`) cover filtering/grouping/search plus, after the adversarial
+  review pass, `hideRead` truthy-string parsing edge cases, literal `%`/`_` in search terms,
+  and case-insensitive `group` values. All HIGH/MEDIUM review findings fixed (no SQL injection
+  found — parameters are properly bound throughout).
 
-**Phase 5 — Action API (dismiss/read/mark-saved, bulk variants)**
+**Phase 5 — Action API (dismiss/read/mark-saved, bulk variants) — ✅ DONE**
 - Input: Phase 4's API. Output: additional routes in `server/api.js`.
 - Test first: assert dismiss is permanent (re-ingesting the same URL doesn't undo it),
   bulk endpoints apply to all given ids.
 - Rollback: revert commit.
+- Summary: added `dismissLink`/`toggleRead`/`toggleSaved` (single-item; the latter two toggle)
+  and `bulkDismiss`/`bulkMarkRead`/`bulkMarkSaved` (bulk `{ids: [...]}`; one-way force-set,
+  not toggles) to `server/api.js`, plus their routes (`POST /api/links/:id/dismiss|read|
+  mark-saved` and `POST /api/links/dismiss|read|mark-saved`). An integration test spanning
+  `ingest.js` + `api.js` proves dismiss survives a fresh re-ingestion of the same URL from a
+  different email. 61 tests total (12 new across `actions.test.js`/`index.test.js`). Adversarial
+  review pass fixed duplicate-id handling in bulk responses and unified the bulk response
+  shape (`{updated: [{id, field: true}]}`) with the single-item routes' shape for Phase 6's
+  benefit; confirmed no read/write race exists (synchronous, single-process) and that dismiss
+  permanence is enforced purely at the ingestion layer, not by these routes.
 
-**Phase 6 — Frontend reimplementation**
+**Phase 6 — Frontend reimplementation — ✅ DONE (with one unverified item — see below)**
 - Input: Phases 4–5's API. Output: `public/index.html`, `public/app.js`, config-driven
   Instapaper URL template.
 - Test first: none meaningful to automate beyond a smoke check; manually verify in a
@@ -194,6 +244,25 @@ independently verifiable/rollback-able (revert the phase's commit).
   bulk bar) per the "run" skill.
 - Rollback: revert commit; `NewsletterDigest.dc.html` mockup stays untouched as reference
   until this phase is confirmed working, then can be deleted.
+- Summary: `public/index.html` + `public/app.js` (vanilla JS, reuses `nocturne/` copied into
+  `public/nocturne/`) fetch `GET /api/links` and render cards/groups/bulk-bar directly into
+  the DOM, wired to all Phase 4/5 routes. Dropped: the Obsidian button (per this doc), the
+  static mockup's topic-chip filter row (the group toggle already covers this — kept to
+  Source/Topic, since `type` has no backing data per the Phase 4 note), and any server-side
+  Instapaper call (`window.open` only, per the design). Browser-smoke-tested via a headless
+  Chromium script covering load/group-toggle/search/hideRead/toggle-read/dismiss/bulk-select/
+  bulk-actions — all worked as expected, plus a rapid-double-click race on toggle routes
+  (found in the adversarial review pass and fixed with a shared `runAction()` in-flight
+  guard + error surfacing, since the toggle routes flip state and a double-fire would
+  silently no-op it).
+  **⚠️ Instapaper URL mechanism NOT verified against the live site** (flagged as needing
+  this since the design doc's inception): this remote dev environment's network egress
+  policy blocks arbitrary outbound hosts, confirmed by `curl`ing instapaper.com/google.com
+  and getting 403/connection-reset from the sandbox proxy. Only confirmed: the frontend
+  builds `https://www.instapaper.com/edit?url=<encoded>&title=<encoded>` correctly and calls
+  `window.open`. **Whoever deploys this needs to manually click "Save to Instapaper" once
+  against the real site to confirm the URL/params/cookie-auth flow actually works before
+  relying on it.**
 
 ## Verification (end-to-end)
 
