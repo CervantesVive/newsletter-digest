@@ -123,6 +123,67 @@ function getLinks(db, { search, group, hideRead } = {}) {
   };
 }
 
+function dismissLink(db, id) {
+  const info = db.prepare('UPDATE links SET dismissed = 1 WHERE id = ?').run(id);
+  if (info.changes === 0) return null;
+  return { id, dismissed: true };
+}
+
+function toggleRead(db, id) {
+  const link = db.prepare('SELECT read FROM links WHERE id = ?').get(id);
+  if (!link) return null;
+  const next = link.read ? 0 : 1;
+  db.prepare('UPDATE links SET read = ? WHERE id = ?').run(next, id);
+  return { id, read: Boolean(next) };
+}
+
+function toggleSaved(db, id) {
+  const link = db.prepare('SELECT saved_instapaper FROM links WHERE id = ?').get(id);
+  if (!link) return null;
+  const next = link.saved_instapaper ? 0 : 1;
+  db.prepare('UPDATE links SET saved_instapaper = ? WHERE id = ?').run(next, id);
+  return { id, savedInstapaper: Boolean(next) };
+}
+
+function bulkSetColumn(db, ids, column, field) {
+  const uniqueIds = [...new Set(ids)];
+  const stmt = db.prepare(`UPDATE links SET ${column} = 1 WHERE id = ?`);
+  const tx = db.transaction((idList) => idList.map((id) => stmt.run(id).changes > 0));
+  const applied = tx(uniqueIds);
+  const updated = uniqueIds.filter((_, i) => applied[i]).map((id) => ({ id, [field]: true }));
+  return { updated };
+}
+
+function bulkDismiss(db, ids) {
+  return bulkSetColumn(db, ids, 'dismissed', 'dismissed');
+}
+
+function bulkMarkRead(db, ids) {
+  return bulkSetColumn(db, ids, 'read', 'read');
+}
+
+function bulkMarkSaved(db, ids) {
+  return bulkSetColumn(db, ids, 'saved_instapaper', 'savedInstapaper');
+}
+
+function parseId(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'id must be a positive integer' });
+    return null;
+  }
+  return id;
+}
+
+function parseIds(req, res) {
+  const { ids } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0 || !ids.every((id) => Number.isInteger(id) && id > 0)) {
+    res.status(400).json({ error: 'body must be { ids: [<positive integer>, ...] }' });
+    return null;
+  }
+  return ids;
+}
+
 function createReadRoutes(db) {
   const router = express.Router();
 
@@ -136,7 +197,58 @@ function createReadRoutes(db) {
     }
   });
 
+  router.post('/api/links/:id/dismiss', (req, res) => {
+    const id = parseId(req, res);
+    if (id === null) return;
+    const result = dismissLink(db, id);
+    if (!result) return res.status(404).json({ error: 'link not found' });
+    res.json(result);
+  });
+
+  router.post('/api/links/:id/read', (req, res) => {
+    const id = parseId(req, res);
+    if (id === null) return;
+    const result = toggleRead(db, id);
+    if (!result) return res.status(404).json({ error: 'link not found' });
+    res.json(result);
+  });
+
+  router.post('/api/links/:id/mark-saved', (req, res) => {
+    const id = parseId(req, res);
+    if (id === null) return;
+    const result = toggleSaved(db, id);
+    if (!result) return res.status(404).json({ error: 'link not found' });
+    res.json(result);
+  });
+
+  router.post('/api/links/dismiss', (req, res) => {
+    const ids = parseIds(req, res);
+    if (ids === null) return;
+    res.json(bulkDismiss(db, ids));
+  });
+
+  router.post('/api/links/read', (req, res) => {
+    const ids = parseIds(req, res);
+    if (ids === null) return;
+    res.json(bulkMarkRead(db, ids));
+  });
+
+  router.post('/api/links/mark-saved', (req, res) => {
+    const ids = parseIds(req, res);
+    if (ids === null) return;
+    res.json(bulkMarkSaved(db, ids));
+  });
+
   return router;
 }
 
-module.exports = { getLinks, createReadRoutes };
+module.exports = {
+  getLinks,
+  createReadRoutes,
+  dismissLink,
+  toggleRead,
+  toggleSaved,
+  bulkDismiss,
+  bulkMarkRead,
+  bulkMarkSaved,
+};

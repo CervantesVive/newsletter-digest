@@ -220,11 +220,21 @@ independently verifiable/rollback-able (revert the phase's commit).
   and case-insensitive `group` values. All HIGH/MEDIUM review findings fixed (no SQL injection
   found — parameters are properly bound throughout).
 
-**Phase 5 — Action API (dismiss/read/mark-saved, bulk variants)**
+**Phase 5 — Action API (dismiss/read/mark-saved, bulk variants) — ✅ DONE**
 - Input: Phase 4's API. Output: additional routes in `server/api.js`.
 - Test first: assert dismiss is permanent (re-ingesting the same URL doesn't undo it),
   bulk endpoints apply to all given ids.
 - Rollback: revert commit.
+- Summary: added `dismissLink`/`toggleRead`/`toggleSaved` (single-item; the latter two toggle)
+  and `bulkDismiss`/`bulkMarkRead`/`bulkMarkSaved` (bulk `{ids: [...]}`; one-way force-set,
+  not toggles) to `server/api.js`, plus their routes (`POST /api/links/:id/dismiss|read|
+  mark-saved` and `POST /api/links/dismiss|read|mark-saved`). An integration test spanning
+  `ingest.js` + `api.js` proves dismiss survives a fresh re-ingestion of the same URL from a
+  different email. 61 tests total (12 new across `actions.test.js`/`index.test.js`). Adversarial
+  review pass fixed duplicate-id handling in bulk responses and unified the bulk response
+  shape (`{updated: [{id, field: true}]}`) with the single-item routes' shape for Phase 6's
+  benefit; confirmed no read/write race exists (synchronous, single-process) and that dismiss
+  permanence is enforced purely at the ingestion layer, not by these routes.
 
 **Phase 6 — Frontend reimplementation**
 - Input: Phases 4–5's API. Output: `public/index.html`, `public/app.js`, config-driven

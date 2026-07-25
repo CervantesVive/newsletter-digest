@@ -102,6 +102,19 @@ docs/plan/ Design docs and implementation plans
   `%` doesn't act as a wildcard. `totalCount`/`unreadCount` are always computed over **all**
   non-dismissed links, ignoring `search`/`hideRead` — they're meant as stable nav-bar totals,
   not "N of M results" counts.
+- **Phase 5 (`server/api.js` action routes)**: `dismissLink` is one-way (no undismiss route) —
+  permanence relies on Phase 2's `INSERT OR IGNORE` never touching an existing row's
+  `dismissed` column on re-ingestion, which is covered by an integration test spanning
+  `ingest.js` + `api.js`. Single-item `POST /:id/read` and `/:id/mark-saved` **toggle**;
+  the bulk variants (`POST /api/links/read`, `/mark-saved`, `/dismiss`, each `{ids: [...]}`)
+  are **one-way force-sets to true**, not toggles — deliberately, since toggling a
+  multi-select with mixed current states would be ambiguous. Bulk responses return
+  `{updated: [{id, <field>: true}, ...]}` (deduped if the request had repeat ids) to keep
+  the same per-field boolean shape as the single-item routes — don't regress this back to a
+  bare id array, Phase 6's frontend will rely on the field name being present. Toggling
+  read/saved-state on an already-`dismissed` link is allowed on purpose (dismiss only ever
+  touches the `dismissed` column, and the UI has no path to a dismissed id anyway) — don't
+  "fix" this by scoping those routes to `WHERE dismissed = 0`, it's tested as intentional.
 
 ## Conventions
 
