@@ -21,11 +21,14 @@ function readLogLines(dir) {
   );
 }
 
-function flush(logger) {
-  return new Promise((resolve) => {
-    logger.on('finish', resolve);
-    logger.end();
-  });
+async function waitForLines(dir, timeoutMs = 2000) {
+  const start = Date.now();
+  let lines = readLogLines(dir);
+  while (lines.length === 0 && Date.now() - start < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    lines = readLogLines(dir);
+  }
+  return lines;
 }
 
 test('writes structured JSON lines to the configured directory', async () => {
@@ -33,9 +36,8 @@ test('writes structured JSON lines to the configured directory', async () => {
   const logger = createLogger({ dir, level: 'info', console: false });
 
   logger.info('test_event', { foo: 1 });
-  await flush(logger);
 
-  const lines = readLogLines(dir);
+  const lines = await waitForLines(dir);
   assert.equal(lines.length, 1);
   assert.equal(lines[0].message, 'test_event');
   assert.equal(lines[0].level, 'info');
@@ -49,9 +51,8 @@ test('LOG_LEVEL filtering: a debug call is dropped when level is info', async ()
 
   logger.debug('debug_event', {});
   logger.info('info_event', {});
-  await flush(logger);
 
-  const lines = readLogLines(dir);
+  const lines = await waitForLines(dir);
   assert.equal(lines.length, 1);
   assert.equal(lines[0].message, 'info_event');
 });

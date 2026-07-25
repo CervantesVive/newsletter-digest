@@ -1,8 +1,6 @@
 const winston = require('winston');
 require('winston-daily-rotate-file');
 const config = require('./config');
-const fs = require('node:fs');
-const path = require('node:path');
 
 function createLogger({
   level = config.LOG_LEVEL,
@@ -10,9 +8,6 @@ function createLogger({
   retentionDays = config.LOG_RETENTION_DAYS,
   console: withConsole = process.env.NODE_ENV !== 'production',
 } = {}) {
-  // Ensure directory exists
-  fs.mkdirSync(dir, { recursive: true });
-
   const transports = [
     new winston.transports.DailyRotateFile({
       dirname: dir,
@@ -29,15 +24,6 @@ function createLogger({
     format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
     transports,
   });
-
-  // Add end() method to flush transports for testing
-  loggerInstance.end = function() {
-    const self = this;
-    // Give transports time to flush, then emit finish
-    setImmediate(() => {
-      self.emit('finish');
-    });
-  };
 
   return loggerInstance;
 }
