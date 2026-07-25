@@ -4,8 +4,26 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
+const winston = require('winston');
+const { Writable } = require('node:stream');
+
 const { openDb } = require('./db');
-const { createApp } = require('./index');
+const { logger } = require('./logger');
+const { createApp, registerCrashHandlers } = require('./index');
+
+function captureLogs() {
+  const entries = [];
+  const transport = new winston.transports.Stream({
+    stream: new Writable({
+      write(chunk, enc, cb) {
+        entries.push(JSON.parse(chunk.toString()));
+        cb();
+      },
+    }),
+  });
+  logger.add(transport);
+  return { entries, stop: () => logger.remove(transport) };
+}
 
 function tmpDb() {
   const dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'digest-index-test-')), 'digest.sqlite');
@@ -151,4 +169,48 @@ test('GET /api/links is wired and returns the read API shape', async () => {
 
   server.close();
   db.close();
+});
+
+test('HTTP requests are logged with method, path, status, and duration', async () => {
+  const db = tmpDb();
+  const app = createApp(db);
+  const server = app.listen(0);
+  const { port } = server.address();
+  const { entries, stop } = captureLogs();
+
+  await fetch(`http://127.0.0.1:${port}/api/links`);
+
+  const logged = entries.find((e) => e.message === 'http_request');
+  assert.ok(logged, 'expected an http_request log entry');
+  assert.equal(logged.method, 'GET');
+  assert.equal(logged.path, '/api/links');
+  assert.equal(logged.status, 200);
+  assert.equal(typeof logged.durationMs, 'number');
+
+  stop();
+  server.close();
+  db.close();
+});
+
+test('registerCrashHandlers logs a fatal event and exits on uncaughtException', (t) => {
+  const exitCalls = [];
+  t.mock.method(process, 'exit', (code) => {
+    exitCalls.push(code);
+  });
+  const onSpy = t.mock.method(process, 'on');
+  const { entries, stop } = captureLogs();
+
+  const unregister = registerCrashHandlers();
+  const call = onSpy.mock.calls.find((c) => c.arguments[0] === 'uncaughtException');
+  const handler = call.arguments[1];
+  handler(new Error('boom'));
+  unregister();
+  stop();
+
+  assert.deepEqual(exitCalls, [1]);
+  const logged = entries.find((e) => e.message === 'uncaught_exception');
+  assert.ok(logged, 'expected an uncaught_exception log entry');
+  assert.equal(logged.level, 'error');
+  assert.equal(logged.fatal, true);
+  assert.match(logged.err, /boom/);
 });
