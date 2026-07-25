@@ -3,9 +3,26 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const winston = require('winston');
+const { Writable } = require('node:stream');
 
 const { openDb } = require('./db');
 const { runEnrichmentPass, ENRICHMENT_SENTINEL } = require('./enrich');
+const { logger } = require('./logger');
+
+function captureLogs() {
+  const entries = [];
+  const transport = new winston.transports.Stream({
+    stream: new Writable({
+      write(chunk, enc, cb) {
+        entries.push(JSON.parse(chunk.toString()));
+        cb();
+      },
+    }),
+  });
+  logger.add(transport);
+  return { entries, stop: () => logger.remove(transport) };
+}
 
 function tmpDb() {
   const dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'digest-enrich-test-')), 'digest.sqlite');
@@ -62,17 +79,26 @@ test('enriches a single-source link and upserts topics', async () => {
 
   const client = fakeClient(() => jsonResponse({ summary: 'A great summary', topics: ['ai', 'news'], read_time: 4 }));
 
-  await runEnrichmentPass(db, { client, model: 'test-model' });
+  const { entries, stop } = captureLogs();
 
-  const link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
-  assert.equal(link.summary, 'A great summary');
-  assert.equal(link.read_time, 4);
-  assert.ok(link.enriched_at);
+  try {
+    await runEnrichmentPass(db, { client, model: 'test-model' });
 
-  const topics = db.prepare('SELECT topic FROM link_topics WHERE link_id = ? ORDER BY topic').all(linkId).map((r) => r.topic);
-  assert.deepEqual(topics, ['ai', 'news']);
+    const link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
+    assert.equal(link.summary, 'A great summary');
+    assert.equal(link.read_time, 4);
+    assert.ok(link.enriched_at);
 
-  db.close();
+    const topics = db.prepare('SELECT topic FROM link_topics WHERE link_id = ? ORDER BY topic').all(linkId).map((r) => r.topic);
+    assert.deepEqual(topics, ['ai', 'news']);
+
+    const loggedEvent = entries.find((e) => e.message === 'enrichment_completed' && e.linkId === linkId);
+    assert.ok(loggedEvent, 'enrichment_completed should be logged');
+    assert.equal(loggedEvent.linkId, linkId);
+  } finally {
+    stop();
+    db.close();
+  }
 });
 
 test('single source with an extracted summary: prompt tells the model to use it directly, not synthesize', async () => {
@@ -143,17 +169,29 @@ test('failure increments enrich_attempts and retries on the next pass', async ()
     throw new Error('LLM unavailable');
   });
 
-  await runEnrichmentPass(db, { client, model: 'test-model' });
-  let link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
-  assert.equal(link.enrich_attempts, 1);
-  assert.equal(link.enriched_at, null);
+  const { entries, stop } = captureLogs();
 
-  await runEnrichmentPass(db, { client, model: 'test-model' });
-  link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
-  assert.equal(link.enrich_attempts, 2);
-  assert.equal(link.enriched_at, null);
+  try {
+    await runEnrichmentPass(db, { client, model: 'test-model' });
+    let link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
+    assert.equal(link.enrich_attempts, 1);
+    assert.equal(link.enriched_at, null);
 
-  db.close();
+    await runEnrichmentPass(db, { client, model: 'test-model' });
+    link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
+    assert.equal(link.enrich_attempts, 2);
+    assert.equal(link.enriched_at, null);
+
+    const loggedEvents = entries.filter((e) => e.message === 'enrichment_failed' && e.linkId === linkId);
+    assert.equal(loggedEvents.length, 2, 'enrichment_failed should be logged twice');
+    assert.equal(loggedEvents[0].linkId, linkId);
+    assert.equal(loggedEvents[0].attempts, 1);
+    assert.equal(loggedEvents[1].linkId, linkId);
+    assert.equal(loggedEvents[1].attempts, 2);
+  } finally {
+    stop();
+    db.close();
+  }
 });
 
 test('after maxAttempts consecutive failures, enriched_at is set to a sentinel and the link stops being retried', async () => {
@@ -164,19 +202,29 @@ test('after maxAttempts consecutive failures, enriched_at is set to a sentinel a
     throw new Error('LLM unavailable');
   });
 
-  for (let i = 0; i < 5; i++) {
+  const { entries, stop } = captureLogs();
+
+  try {
+    for (let i = 0; i < 5; i++) {
+      await runEnrichmentPass(db, { client, model: 'test-model', maxAttempts: 5 });
+    }
+
+    const link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
+    assert.equal(link.enrich_attempts, 5);
+    assert.equal(link.enriched_at, ENRICHMENT_SENTINEL);
+
+    const loggedGaveUp = entries.find((e) => e.message === 'enrichment_gave_up' && e.linkId === linkId);
+    assert.ok(loggedGaveUp, 'enrichment_gave_up should be logged');
+    assert.equal(loggedGaveUp.linkId, linkId);
+    assert.equal(loggedGaveUp.attempts, 5);
+
+    const callsBefore = client.calls.length;
     await runEnrichmentPass(db, { client, model: 'test-model', maxAttempts: 5 });
+    assert.equal(client.calls.length, callsBefore, 'a sentinel-stopped link must not be selected again');
+  } finally {
+    stop();
+    db.close();
   }
-
-  const link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
-  assert.equal(link.enrich_attempts, 5);
-  assert.equal(link.enriched_at, ENRICHMENT_SENTINEL);
-
-  const callsBefore = client.calls.length;
-  await runEnrichmentPass(db, { client, model: 'test-model', maxAttempts: 5 });
-  assert.equal(client.calls.length, callsBefore, 'a sentinel-stopped link must not be selected again');
-
-  db.close();
 });
 
 test('malformed (non-JSON, or wrong-shaped JSON) LLM responses are treated as failures, not crashes', async () => {
