@@ -41,6 +41,18 @@ data/      SQLite file (gitignored)
 docs/plan/ Design docs and implementation plans
 ```
 
+## Phase notes / gotchas
+
+- **Phase 1 (`server/db.js`)**: `link_sources`/`link_topics` join-column FKs are declared `NOT NULL`
+  (design doc's SQL leaves them nullable — deviation is intentional, keep it). `foreign_keys = ON`
+  is a per-connection pragma, not persisted in the DB file — every `openDb()` call sets it before
+  running the schema, and it's covered by a test that inserts a dangling FK and expects rejection;
+  don't refactor `openDb()` in a way that opens a raw `Database()` without that pragma. WAL mode is
+  also verified by a real test (`db.pragma('journal_mode', {simple:true})`), not assumed. No
+  `ON DELETE` behavior is defined anywhere (nothing in the app ever deletes emails/links rows today
+  — dismiss is a flag) — if a future retention/cleanup job needs to delete old rows, decide
+  cascade/restrict behavior then, don't assume `NO ACTION` will do the right thing.
+
 ## Conventions
 
 - Follow the phased implementation plan in `docs/plan/` in order; each phase gets a failing test before implementation.

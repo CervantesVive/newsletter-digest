@@ -154,10 +154,17 @@ data/
 Each phase is atomic: self-contained inputs/outputs, a failing test written first, and
 independently verifiable/rollback-able (revert the phase's commit).
 
-**Phase 1 — DB schema + migrations**
+**Phase 1 — DB schema + migrations — ✅ DONE**
 - Input: schema above. Output: `server/db.js`, migration applied to a fresh `data/digest.sqlite`.
 - Test first: a test that opens the DB, runs migrations, asserts all tables/columns exist.
 - Rollback: delete `data/digest.sqlite`, revert commit.
+- Summary: `server/db.js` exports `openDb(dbPath)` — idempotent, creates parent dir, opens
+  better-sqlite3 with WAL + `foreign_keys=ON`, runs the schema above (`link_sources`/
+  `link_topics` FK columns tightened to `NOT NULL`, a deviation from this doc's SQL — see
+  AGENTS.md). 10 tests in `server/db.test.js` cover table/column shape, UNIQUE/NOT NULL/FK
+  enforcement, WAL mode actually being active, and data surviving a close/reopen cycle.
+  Adversarial review pass done; all HIGH/MEDIUM findings resolved except the "no ON DELETE
+  behavior" one, deferred as a documented future concern (nothing deletes rows yet).
 
 **Phase 2 — Ingestion endpoint (MIME parse → dedupe → link extraction)**
 - Input: Phase 1's DB. Output: `server/ingest.js`, `POST /ingest` wired into `server/index.js`.
