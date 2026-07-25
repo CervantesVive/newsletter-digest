@@ -150,11 +150,11 @@ async function enrichAndPersist(db, client, model, link, maxAttempts) {
   try {
     const parsed = await callLlm(client, model, link, sources);
     persistSuccess(db, link.id, parsed);
-    logger.info('enrichment_completed', { linkId: link.id });
+    logger.info('enrichment_completed', { linkId: link.id, attempt: link.enrich_attempts });
     return { linkId: link.id, status: 'enriched' };
   } catch (err) {
     const attempts = persistFailure(db, link.id, maxAttempts);
-    logger.warn('enrichment_failed', { linkId: link.id, attempts, err: err.message });
+    logger.warn('enrichment_failed', { linkId: link.id, attempt: attempts, err: err.message });
     if (attempts >= maxAttempts) {
       logger.error('enrichment_gave_up', { linkId: link.id, attempts });
     }

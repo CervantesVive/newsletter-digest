@@ -95,6 +95,7 @@ test('enriches a single-source link and upserts topics', async () => {
     const loggedEvent = entries.find((e) => e.message === 'enrichment_completed' && e.linkId === linkId);
     assert.ok(loggedEvent, 'enrichment_completed should be logged');
     assert.equal(loggedEvent.linkId, linkId);
+    assert.equal(loggedEvent.attempt, 0);
   } finally {
     stop();
     db.close();
@@ -185,9 +186,9 @@ test('failure increments enrich_attempts and retries on the next pass', async ()
     const loggedEvents = entries.filter((e) => e.message === 'enrichment_failed' && e.linkId === linkId);
     assert.equal(loggedEvents.length, 2, 'enrichment_failed should be logged twice');
     assert.equal(loggedEvents[0].linkId, linkId);
-    assert.equal(loggedEvents[0].attempts, 1);
+    assert.equal(loggedEvents[0].attempt, 1);
     assert.equal(loggedEvents[1].linkId, linkId);
-    assert.equal(loggedEvents[1].attempts, 2);
+    assert.equal(loggedEvents[1].attempt, 2);
   } finally {
     stop();
     db.close();
