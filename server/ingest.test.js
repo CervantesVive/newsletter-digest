@@ -3,9 +3,26 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const winston = require('winston');
+const { Writable } = require('node:stream');
 
 const { openDb } = require('./db');
 const { ingestEmails, normalizeUrl } = require('./ingest');
+const { logger } = require('./logger');
+
+function captureLogs() {
+  const entries = [];
+  const transport = new winston.transports.Stream({
+    stream: new Writable({
+      write(chunk, enc, cb) {
+        entries.push(JSON.parse(chunk.toString()));
+        cb();
+      },
+    }),
+  });
+  logger.add(transport);
+  return { entries, stop: () => logger.remove(transport) };
+}
 
 function tmpDb() {
   const dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'digest-ingest-test-')), 'digest.sqlite');
@@ -24,6 +41,7 @@ function mime({ messageId, from, subject, html }) {
 
 test('ingests a single email: creates email row, extracts link, sets processed_at', async () => {
   const db = tmpDb();
+  const { entries, stop } = captureLogs();
   const raw = mime({
     messageId: '<one@example.com>',
     html: '<html><body><p>Check out <a href="https://example.com/article?utm_source=news&ref=abc">this cool article</a> about AI.</p></body></html>',
@@ -52,6 +70,13 @@ test('ingests a single email: creates email row, extracts link, sets processed_a
   assert.ok(source);
   assert.match(source.extracted_summary, /this cool article/);
 
+  const logged = entries.find((e) => e.message === 'ingest_completed');
+  assert.ok(logged, 'expected an ingest_completed log entry');
+  assert.equal(logged.level, 'info');
+  assert.equal(logged.linksFound, 1);
+  assert.equal(logged.dupes, 0);
+
+  stop();
   db.close();
 });
 
@@ -121,6 +146,7 @@ test('missing Message-ID falls back to a stable SHA-256(from+subject+body) dedup
 
 test('one bad email in a batch does not abort processing of the others', async () => {
   const db = tmpDb();
+  const { entries, stop } = captureLogs();
   const good = mime({ messageId: '<good@example.com>', html: '<a href="https://example.com/good">Good</a>' });
 
   const { results } = await ingestEmails(db, [{ raw_mime: 12345 }, { raw_mime: good }]);
@@ -133,6 +159,12 @@ test('one bad email in a batch does not abort processing of the others', async (
   const email = db.prepare('SELECT * FROM emails WHERE message_id = ?').get('<good@example.com>');
   assert.ok(email);
 
+  const logged = entries.find((e) => e.message === 'ingest_failed');
+  assert.ok(logged, 'expected an ingest_failed log entry');
+  assert.equal(logged.level, 'error');
+  assert.ok(logged.err);
+
+  stop();
   db.close();
 });
 
