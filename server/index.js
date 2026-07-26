@@ -5,6 +5,7 @@ const { openDb } = require('./db');
 const { ingestEmails } = require('./ingest');
 const { startEnrichmentLoop } = require('./enrich');
 const { createReadRoutes } = require('./api');
+const { logger } = require('./logger');
 const {
   DB_PATH,
   PORT,
@@ -19,6 +20,19 @@ const {
 function createApp(db) {
   const app = express();
   app.use(express.json({ limit: '50mb' }));
+
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      logger.info('http_request', {
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        durationMs: Date.now() - start,
+      });
+    });
+    next();
+  });
 
   app.post('/ingest', async (req, res, next) => {
     const emails = req.body?.emails;
@@ -46,11 +60,31 @@ function createApp(db) {
   return app;
 }
 
+function registerCrashHandlers() {
+  const onUncaught = (err) => {
+    logger.error('uncaught_exception', { err: err.message, stack: err.stack, fatal: true });
+    process.exit(1);
+  };
+  const onRejection = (reason) => {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    logger.error('unhandled_rejection', { err: err.message, stack: err.stack, fatal: true });
+    process.exit(1);
+  };
+  process.on('uncaughtException', onUncaught);
+  process.on('unhandledRejection', onRejection);
+  return () => {
+    process.off('uncaughtException', onUncaught);
+    process.off('unhandledRejection', onRejection);
+  };
+}
+
 if (require.main === module) {
+  registerCrashHandlers();
+
   const db = openDb(DB_PATH);
   const app = createApp(db);
   app.listen(PORT, () => {
-    console.log(`newsletter-digest listening on :${PORT}`);
+    logger.info('server_started', { port: PORT });
   });
 
   if (LLM_BASE_URL && LLM_MODEL) {
@@ -62,10 +96,12 @@ if (require.main === module) {
       concurrency: ENRICHMENT_CONCURRENCY,
       maxAttempts: ENRICHMENT_MAX_ATTEMPTS,
     });
-    console.log(`enrichment loop started against ${LLM_BASE_URL} (model: ${LLM_MODEL})`);
+    logger.info('enrichment_configured', { baseUrl: LLM_BASE_URL, model: LLM_MODEL });
   } else {
-    console.warn('LLM_BASE_URL/LLM_MODEL not set — enrichment loop disabled, links will stay unenriched');
+    logger.warn('enrichment_disabled', {
+      reason: 'LLM_BASE_URL/LLM_MODEL not set — links will stay unenriched',
+    });
   }
 }
 
-module.exports = { createApp };
+module.exports = { createApp, registerCrashHandlers };

@@ -13,6 +13,10 @@ const ENRICHMENT_INTERVAL_MS = Math.max(1000, Number(process.env.ENRICHMENT_INTE
 const ENRICHMENT_CONCURRENCY = Math.max(1, Number(process.env.ENRICHMENT_CONCURRENCY) || 3);
 const ENRICHMENT_MAX_ATTEMPTS = Math.max(1, Number(process.env.ENRICHMENT_MAX_ATTEMPTS) || 5);
 
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+const LOG_RETENTION_DAYS = Math.max(1, Number(process.env.LOG_RETENTION_DAYS) || 14);
+const LOG_DIR = process.env.LOG_DIR || path.join(__dirname, '..', 'data', 'logs');
+
 module.exports = {
   DB_PATH,
   PORT,
@@ -22,4 +26,7 @@ module.exports = {
   ENRICHMENT_INTERVAL_MS,
   ENRICHMENT_CONCURRENCY,
   ENRICHMENT_MAX_ATTEMPTS,
+  LOG_LEVEL,
+  LOG_RETENTION_DAYS,
+  LOG_DIR,
 };

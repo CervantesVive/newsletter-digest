@@ -3,9 +3,26 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const winston = require('winston');
+const { Writable } = require('node:stream');
 
 const { openDb } = require('./db');
-const { runEnrichmentPass, ENRICHMENT_SENTINEL } = require('./enrich');
+const { runEnrichmentPass, startEnrichmentLoop, ENRICHMENT_SENTINEL } = require('./enrich');
+const { logger } = require('./logger');
+
+function captureLogs() {
+  const entries = [];
+  const transport = new winston.transports.Stream({
+    stream: new Writable({
+      write(chunk, enc, cb) {
+        entries.push(JSON.parse(chunk.toString()));
+        cb();
+      },
+    }),
+  });
+  logger.add(transport);
+  return { entries, stop: () => logger.remove(transport) };
+}
 
 function tmpDb() {
   const dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'digest-enrich-test-')), 'digest.sqlite');
@@ -62,17 +79,27 @@ test('enriches a single-source link and upserts topics', async () => {
 
   const client = fakeClient(() => jsonResponse({ summary: 'A great summary', topics: ['ai', 'news'], read_time: 4 }));
 
-  await runEnrichmentPass(db, { client, model: 'test-model' });
+  const { entries, stop } = captureLogs();
 
-  const link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
-  assert.equal(link.summary, 'A great summary');
-  assert.equal(link.read_time, 4);
-  assert.ok(link.enriched_at);
+  try {
+    await runEnrichmentPass(db, { client, model: 'test-model' });
 
-  const topics = db.prepare('SELECT topic FROM link_topics WHERE link_id = ? ORDER BY topic').all(linkId).map((r) => r.topic);
-  assert.deepEqual(topics, ['ai', 'news']);
+    const link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
+    assert.equal(link.summary, 'A great summary');
+    assert.equal(link.read_time, 4);
+    assert.ok(link.enriched_at);
 
-  db.close();
+    const topics = db.prepare('SELECT topic FROM link_topics WHERE link_id = ? ORDER BY topic').all(linkId).map((r) => r.topic);
+    assert.deepEqual(topics, ['ai', 'news']);
+
+    const loggedEvent = entries.find((e) => e.message === 'enrichment_completed' && e.linkId === linkId);
+    assert.ok(loggedEvent, 'enrichment_completed should be logged');
+    assert.equal(loggedEvent.linkId, linkId);
+    assert.equal(loggedEvent.attempt, 0);
+  } finally {
+    stop();
+    db.close();
+  }
 });
 
 test('single source with an extracted summary: prompt tells the model to use it directly, not synthesize', async () => {
@@ -143,17 +170,29 @@ test('failure increments enrich_attempts and retries on the next pass', async ()
     throw new Error('LLM unavailable');
   });
 
-  await runEnrichmentPass(db, { client, model: 'test-model' });
-  let link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
-  assert.equal(link.enrich_attempts, 1);
-  assert.equal(link.enriched_at, null);
+  const { entries, stop } = captureLogs();
 
-  await runEnrichmentPass(db, { client, model: 'test-model' });
-  link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
-  assert.equal(link.enrich_attempts, 2);
-  assert.equal(link.enriched_at, null);
+  try {
+    await runEnrichmentPass(db, { client, model: 'test-model' });
+    let link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
+    assert.equal(link.enrich_attempts, 1);
+    assert.equal(link.enriched_at, null);
 
-  db.close();
+    await runEnrichmentPass(db, { client, model: 'test-model' });
+    link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
+    assert.equal(link.enrich_attempts, 2);
+    assert.equal(link.enriched_at, null);
+
+    const loggedEvents = entries.filter((e) => e.message === 'enrichment_failed' && e.linkId === linkId);
+    assert.equal(loggedEvents.length, 2, 'enrichment_failed should be logged twice');
+    assert.equal(loggedEvents[0].linkId, linkId);
+    assert.equal(loggedEvents[0].attempt, 1);
+    assert.equal(loggedEvents[1].linkId, linkId);
+    assert.equal(loggedEvents[1].attempt, 2);
+  } finally {
+    stop();
+    db.close();
+  }
 });
 
 test('after maxAttempts consecutive failures, enriched_at is set to a sentinel and the link stops being retried', async () => {
@@ -164,19 +203,29 @@ test('after maxAttempts consecutive failures, enriched_at is set to a sentinel a
     throw new Error('LLM unavailable');
   });
 
-  for (let i = 0; i < 5; i++) {
+  const { entries, stop } = captureLogs();
+
+  try {
+    for (let i = 0; i < 5; i++) {
+      await runEnrichmentPass(db, { client, model: 'test-model', maxAttempts: 5 });
+    }
+
+    const link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
+    assert.equal(link.enrich_attempts, 5);
+    assert.equal(link.enriched_at, ENRICHMENT_SENTINEL);
+
+    const loggedGaveUp = entries.find((e) => e.message === 'enrichment_gave_up' && e.linkId === linkId);
+    assert.ok(loggedGaveUp, 'enrichment_gave_up should be logged');
+    assert.equal(loggedGaveUp.linkId, linkId);
+    assert.equal(loggedGaveUp.attempts, 5);
+
+    const callsBefore = client.calls.length;
     await runEnrichmentPass(db, { client, model: 'test-model', maxAttempts: 5 });
+    assert.equal(client.calls.length, callsBefore, 'a sentinel-stopped link must not be selected again');
+  } finally {
+    stop();
+    db.close();
   }
-
-  const link = db.prepare('SELECT * FROM links WHERE id = ?').get(linkId);
-  assert.equal(link.enrich_attempts, 5);
-  assert.equal(link.enriched_at, ENRICHMENT_SENTINEL);
-
-  const callsBefore = client.calls.length;
-  await runEnrichmentPass(db, { client, model: 'test-model', maxAttempts: 5 });
-  assert.equal(client.calls.length, callsBefore, 'a sentinel-stopped link must not be selected again');
-
-  db.close();
 });
 
 test('malformed (non-JSON, or wrong-shaped JSON) LLM responses are treated as failures, not crashes', async () => {
@@ -275,5 +324,46 @@ test('one failing link in a batch does not stop the others from being enriched',
   assert.ok(okLink.enriched_at);
   assert.equal(okLink.summary, 'ok');
 
+  db.close();
+});
+
+test('logs enrichment_loop_started and enrichment_loop_stopped', () => {
+  const db = tmpDb();
+  const { entries, stop } = captureLogs();
+  const client = fakeClient(() => jsonResponse({ summary: 's', topics: [], read_time: 1 }));
+
+  const stopLoop = startEnrichmentLoop(db, { client, model: 'test-model', intervalMs: 1000, concurrency: 2 });
+
+  const started = entries.find((e) => e.message === 'enrichment_loop_started');
+  assert.ok(started, 'expected an enrichment_loop_started log entry');
+  assert.equal(started.intervalMs, 1000);
+  assert.equal(started.concurrency, 2);
+
+  stopLoop();
+
+  assert.ok(entries.find((e) => e.message === 'enrichment_loop_stopped'));
+
+  stop();
+  db.close();
+});
+
+test('logs enrichment_loop_stalled when a pass hangs past 5x the interval', (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] });
+  const db = tmpDb();
+  seedLink(db);
+  const { entries, stop } = captureLogs();
+  const hangingClient = { chat: { completions: { create: () => new Promise(() => {}) } } };
+
+  const stopLoop = startEnrichmentLoop(db, { client: hangingClient, model: 'test-model', intervalMs: 1000 });
+
+  t.mock.timers.tick(1000); // first pass starts and hangs
+  t.mock.timers.tick(5000); // 5 more intervals with no completed pass
+
+  const stalled = entries.find((e) => e.message === 'enrichment_loop_stalled');
+  assert.ok(stalled, 'expected an enrichment_loop_stalled log entry');
+  assert.equal(stalled.level, 'error');
+
+  stopLoop();
+  stop();
   db.close();
 });

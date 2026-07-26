@@ -1,3 +1,5 @@
+const { logger } = require('./logger');
+
 const ENRICHMENT_SENTINEL = 'gave_up';
 
 // This app is architected as a single Node process (see AGENTS.md), so the only realistic
@@ -125,9 +127,10 @@ function persistSuccess(db, linkId, parsed) {
 }
 
 function persistFailure(db, linkId, maxAttempts) {
+  let attempts;
   const tx = db.transaction(() => {
     const { enrich_attempts: prevAttempts } = db.prepare('SELECT enrich_attempts FROM links WHERE id = ?').get(linkId);
-    const attempts = prevAttempts + 1;
+    attempts = prevAttempts + 1;
     if (attempts >= maxAttempts) {
       db.prepare('UPDATE links SET enrich_attempts = ?, enriched_at = ? WHERE id = ?').run(
         attempts,
@@ -139,6 +142,7 @@ function persistFailure(db, linkId, maxAttempts) {
     }
   });
   tx();
+  return attempts;
 }
 
 async function enrichAndPersist(db, client, model, link, maxAttempts) {
@@ -146,9 +150,14 @@ async function enrichAndPersist(db, client, model, link, maxAttempts) {
   try {
     const parsed = await callLlm(client, model, link, sources);
     persistSuccess(db, link.id, parsed);
+    logger.info('enrichment_completed', { linkId: link.id, attempt: link.enrich_attempts });
     return { linkId: link.id, status: 'enriched' };
   } catch (err) {
-    persistFailure(db, link.id, maxAttempts);
+    const attempts = persistFailure(db, link.id, maxAttempts);
+    logger.warn('enrichment_failed', { linkId: link.id, attempt: attempts, err: err.message });
+    if (attempts >= maxAttempts) {
+      logger.error('enrichment_gave_up', { linkId: link.id, attempts });
+    }
     return { linkId: link.id, status: 'failed', error: err.message };
   } finally {
     inFlightLinkIds.delete(link.id);
@@ -177,18 +186,37 @@ async function runEnrichmentPass(db, { client, model, concurrency = 3, maxAttemp
 
 function startEnrichmentLoop(db, { client, model, intervalMs = 30000, concurrency = 3, maxAttempts = 5 }) {
   let running = false;
+  let lastPassAt = Date.now();
+  let stalled = false;
+  const stallThresholdMs = intervalMs * 5;
+
+  logger.info('enrichment_loop_started', { intervalMs, concurrency });
+
   const timer = setInterval(async () => {
+    if (!stalled && Date.now() - lastPassAt > stallThresholdMs) {
+      stalled = true;
+      logger.error('enrichment_loop_stalled', {
+        minutesSinceLastPass: Math.round((Date.now() - lastPassAt) / 60000),
+      });
+    }
+
     if (running) return;
     running = true;
     try {
       await runEnrichmentPass(db, { client, model, concurrency, maxAttempts });
+      lastPassAt = Date.now();
+      stalled = false;
     } catch (err) {
-      console.error('enrichment pass failed:', err);
+      logger.error('enrichment_pass_failed', { err: err.message, stack: err.stack });
     } finally {
       running = false;
     }
   }, intervalMs);
-  return () => clearInterval(timer);
+
+  return () => {
+    clearInterval(timer);
+    logger.info('enrichment_loop_stopped', {});
+  };
 }
 
 module.exports = {

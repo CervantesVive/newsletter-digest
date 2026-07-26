@@ -2,5 +2,6 @@
 .remember/
 .idea/
 data/*.sqlite*
+data/logs/
 node_modules/
 .env

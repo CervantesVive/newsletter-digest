@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { simpleParser } = require('mailparser');
 const cheerio = require('cheerio');
+const { logger } = require('./logger');
 
 const TRACKING_PARAM_PREFIXES = ['utm_', 'mc_'];
 const TRACKING_PARAM_EXACT = new Set([
@@ -113,6 +114,8 @@ async function ingestOne(db, rawInput) {
   );
   const markProcessed = db.prepare(`UPDATE emails SET processed_at = ? WHERE id = ?`);
 
+  let dupeLinks = 0;
+
   // Whole ingest is one transaction: the email row, its links, and processed_at all
   // commit together, so a failure partway through never leaves an email row stuck
   // permanently unprocessed under a message_id that's now "taken" for dedup purposes.
@@ -132,7 +135,8 @@ async function ingestOne(db, rawInput) {
 
     const emailId = info.lastInsertRowid;
     for (const link of links) {
-      insertLink.run(link.urlNormalized, link.urlOriginal, link.extractedSummary);
+      const linkInfo = insertLink.run(link.urlNormalized, link.urlOriginal, link.extractedSummary);
+      if (linkInfo.changes === 0) dupeLinks += 1;
       const { id: linkId } = selectLink.get(link.urlNormalized);
       insertSource.run(linkId, emailId, link.extractedSummary);
     }
@@ -141,7 +145,11 @@ async function ingestOne(db, rawInput) {
     return { message_id: messageId, status: 'ingested' };
   });
 
-  return ingestTx();
+  const result = ingestTx();
+  if (result.status === 'ingested') {
+    logger.info('ingest_completed', { linksFound: links.length, dupes: dupeLinks });
+  }
+  return result;
 }
 
 async function ingestEmails(db, emails) {
@@ -150,6 +158,7 @@ async function ingestEmails(db, emails) {
     try {
       results.push(await ingestOne(db, email.raw_mime));
     } catch (err) {
+      logger.error('ingest_failed', { err: err.message, stack: err.stack });
       results.push({ message_id: null, status: 'error', error: err.message });
     }
   }

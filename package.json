@@ -15,6 +15,8 @@
     "cheerio": "^1.2.0",
     "express": "^5.2.1",
     "mailparser": "^3.9.14",
-    "openai": "^6.49.0"
+    "openai": "^6.49.0",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0"
   }
 }
