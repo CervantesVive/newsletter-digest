@@ -27,10 +27,8 @@ changes. It has the SQLite schema, ingestion/enrichment flows, API surface, and 
   dismissed even if a later newsletter cites the same URL again.
 - **A link can have multiple sources and multiple topics** (`link_sources`, `link_topics`
   join tables) — don't collapse these back to single-value columns.
-- **The frontend is plain HTML + vanilla JS, no build step, no framework** — reuses the
-  `nocturne/` design system's CSS classes and `NewsletterDigest.dc.html`'s markup as a
-  structural reference, but that `.dc.html` file itself (and `support.js`) is a
-  prototyping-tool preview runtime, not production code — don't extend it, replace it.
+- **The frontend is plain HTML + vanilla JS, no build step, no framework** — uses the
+  `public/nocturne/` design system's CSS classes.
 
 ## Repo layout
 
@@ -91,8 +89,8 @@ docs/plan/ Design docs and implementation plans
 - **Phase 4 (`server/api.js`)**: the design doc's `GET /api/links?group=source|topic|type`
   mentions a `type` group option, but no `type` column/classification exists anywhere in the
   schema or enrichment output (only multi-valued `topics`) — this was a leftover from the
-  original static mockup's taxonomy (see `newsletter-data.js`), not something Phase 1–3 ever
-  built. `group=type` (and any value other than `source`/`topic`) intentionally throws a 400
+  original static mockup's taxonomy, not something Phase 1–3 ever built. `group=type`
+  (and any value other than `source`/`topic`) intentionally throws a 400
   rather than silently misbehaving; `type` support is deferred, not implemented, until/unless
   a future phase adds a real classification signal for it. `group` is case-insensitive.
   `hideRead` only treats `"true"`/`"1"`/`"yes"` (case-insensitive) as true — everything else,
