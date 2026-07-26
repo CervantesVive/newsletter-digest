@@ -144,6 +144,20 @@ docs/plan/ Design docs and implementation plans
   actual edit page accepts these query params or that the browser-session-cookie auth flow
   described in the design doc really works. **Whoever deploys this for real Tailscale/browser
   use must manually click "Save to Instapaper" once against the live site before trusting it.**
+- **Operational logging (`server/logger.js`, instrumentation in `server/ingest.js`/`server/enrich.js`/
+  `server/index.js`, see `docs/superpowers/specs/2026-07-25-operational-logging-design.md`)**: structured
+  JSON logs via winston + winston-daily-rotate-file, `LOG_LEVEL`/`LOG_RETENTION_DAYS`/`LOG_DIR` env vars,
+  `data/logs/` gitignored. Two test gotchas worth knowing before touching this: (1) calling winston's
+  `.end()` immediately after `.info()`/`.error()` races `winston-daily-rotate-file`'s flush — the write
+  can be silently lost even though `'finish'` fires; `server/logger.test.js` polls the log file instead
+  of waiting on `.end()`/`'finish'`. (2) `node --test` registers its own `uncaughtException` listener
+  before any test file loads, and it unconditionally fails whichever test is running when that event
+  fires — so testing `registerCrashHandlers()` (`server/index.js`) via `process.emit('uncaughtException', ...)`
+  doesn't work regardless of the handler's own logic. `server/index.test.js` instead spies on `process.on`
+  to capture the real registered listener and invokes it directly. `ingest_completed`/`ingest_failed`
+  deliberately omit an `emailId` field despite the design spec's instrumentation table listing one
+  (dropped when the plan was written) — no correlation key currently ties an `ingest_completed` log line
+  back to a specific email/DB row; documented as a known follow-up in PR #2, not yet fixed.
 
 ## Conventions
 
