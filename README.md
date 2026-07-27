@@ -6,8 +6,7 @@ Instapaper, dismiss) from a single feed.
 
 This service does **not** retrieve email itself — something else (e.g. a Hermes-style
 agent, a mail rule, a cron job) needs to `POST` raw MIME emails to it. See
-[`docs/plan/2026-07-25-newsletter-digest-design.md`](docs/plan/2026-07-25-newsletter-digest-design.md)
-for the full architecture, and [`AGENTS.md`](AGENTS.md) for implementation gotchas.
+[`AGENTS.md`](AGENTS.md) for architecture notes and implementation gotchas.
 
 ## Prerequisites
 
@@ -15,9 +14,10 @@ for the full architecture, and [`AGENTS.md`](AGENTS.md) for implementation gotch
       `node:test` runner and `better-sqlite3`, which needs a reasonably current Node.
 - [ ] A place to run a long-lived process (this is a single Node process, not serverless —
       a systemd service, `pm2`, Docker container, or similar).
-- [ ] **Network access restricted to trusted clients.** There is no login/auth built in —
-      the app assumes it's only reachable over a private network (e.g. Tailscale). Do not
-      expose it to the open internet as-is.
+- [ ] **A network access plan.** There is no login/auth built in — decide how you'll
+      restrict access before exposing this anywhere (a private network/VPN, a reverse
+      proxy with its own auth, a firewall rule, etc.). This is a deployment detail, not
+      something this app enforces itself.
 - [ ] *(Optional but recommended)* An OpenAI-compatible LLM endpoint (e.g.
       [LiteLLM](https://github.com/BerriAI/litellm)) if you want links summarized/
       categorized. Without one, ingestion and the feed still work — links just stay
@@ -94,7 +94,42 @@ export LLM_MODEL=gpt-4o-mini
   - [ ] systemd unit that runs `node server/index.js` with `WorkingDirectory` set to the
         repo and `Restart=on-failure`.
   - [ ] `pm2 start server/index.js --name newsletter-digest`
-  - [ ] A Docker container built from this repo, with `data/` mounted as a volume.
+  - [ ] Docker — see [Deploy with Docker](#deploy-with-docker) below, the recommended path
+        for a host that isn't your dev machine.
+
+## Deploy with Docker
+
+This is the recommended way to run this app on a separate host from where you develop it —
+the deploy host only needs Docker, never a git checkout of this repo.
+
+CI (`.github/workflows/publish.yml`) builds and pushes an image to GHCR on every `vX.Y.Z`
+tag push, so pulling `ghcr.io/cervantesvive/newsletter-digest:<tag>` gets you a released
+build with no local build step.
+
+- [ ] On the deploy host, copy just two files from this repo (not the whole repo):
+  - [ ] [`deploy/docker-compose.yml`](deploy/docker-compose.yml)
+  - [ ] [`.env.example`](.env.example) → rename to `.env` and fill in real values (see the
+        Configure section above for what each variable means). This `.env` never gets
+        committed anywhere — it lives only on the deploy host.
+- [ ] Edit `docker-compose.yml`'s `image:` line to pin a real release tag instead of
+      `:latest`, and its `ports:` line to match your network access plan (this app has no
+      auth — see the Prerequisites note above).
+- [ ] Pull and start:
+  ```bash
+  docker compose pull
+  docker compose up -d
+  ```
+- [ ] Confirm it's listening (same check as the non-Docker path):
+  ```bash
+  curl http://<host>:3000/api/links
+  ```
+  Expect `{"groups":[],"totalCount":0,"unreadCount":0}` on a fresh install.
+- [ ] Data (SQLite file + logs) persists in the `digest-data` named volume across
+      `docker compose down`/`up` and image upgrades — it's only lost if you explicitly
+      remove the volume (`docker compose down -v`).
+- [ ] To upgrade: edit the `image:` tag in `docker-compose.yml`, then `docker compose pull
+      && docker compose up -d`. Updates are manual on purpose — nothing auto-updates the
+      running container.
 
 ## Wire up ingestion
 

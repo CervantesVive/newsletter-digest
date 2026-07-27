@@ -5,9 +5,8 @@
 A personal newsletter triage app that receives raw emails then extracts/dedupes/categorizes/summarizes links into a single feed with dismiss/read/save
 actions.
 
-Full design and phased implementation plan:
-`docs/plan/2026-07-25-newsletter-digest-design.md` — read it before making architectural
-changes. It has the SQLite schema, ingestion/enrichment flows, API surface, and repo layout.
+See the Key decisions and Phase notes/gotchas sections below before making architectural
+changes.
 
 ## Key decisions (don't re-derive these)
 
@@ -36,13 +35,12 @@ changes. It has the SQLite schema, ingestion/enrichment flows, API surface, and 
 server/    Node.js backend (db.js, ingest.js, enrich.js, api.js, config.js)
 public/    Frontend (index.html, app.js, nocturne/ design system)
 data/      SQLite file (gitignored)
-docs/plan/ Design docs and implementation plans
 ```
 
 ## Phase notes / gotchas
 
 - **Phase 1 (`server/db.js`)**: `link_sources`/`link_topics` join-column FKs are declared `NOT NULL`
-  (design doc's SQL leaves them nullable — deviation is intentional, keep it). `foreign_keys = ON`
+  (an earlier schema draft left them nullable — this was a deliberate deviation, keep it). `foreign_keys = ON`
   is a per-connection pragma, not persisted in the DB file — every `openDb()` call sets it before
   running the schema, and it's covered by a test that inserts a dangling FK and expects rejection;
   don't refactor `openDb()` in a way that opens a raw `Database()` without that pragma. WAL mode is
@@ -75,7 +73,7 @@ docs/plan/ Design docs and implementation plans
   `'gave_up'` (`ENRICHMENT_SENTINEL`, exported from `enrich.js`) after `enrich_attempts`
   hits `ENRICHMENT_MAX_ATTEMPTS` failures. **Phase 4's read API must not treat
   `enriched_at IS NOT NULL` as "has a summary" — a gave-up link has `summary`/`read_time`
-  still NULL and should render as "Uncategorized"/ungrouped, matching the design doc.**
+  still NULL and should render as "Uncategorized"/ungrouped.**
   `runEnrichmentPass` guards itself against double-processing the same link if two passes
   overlap in the same process (a module-level in-flight `Set`, since this app is
   single-process by design — see the ingestion note above; it does not defend against a
@@ -86,8 +84,8 @@ docs/plan/ Design docs and implementation plans
   `LLM_BASE_URL`/`LLM_MODEL` aren't set, rather than crashing. Topics from the LLM are
   trimmed/lowercased/deduped before insert — don't assume `link_topics.topic` preserves the
   LLM's original casing.
-- **Phase 4 (`server/api.js`)**: the design doc's `GET /api/links?group=source|topic|type`
-  mentions a `type` group option, but no `type` column/classification exists anywhere in the
+- **Phase 4 (`server/api.js`)**: an early design considered a `type` group option
+  (`GET /api/links?group=source|topic|type`), but no `type` column/classification exists anywhere in the
   schema or enrichment output (only multi-valued `topics`) — this was a leftover from the
   original static mockup's taxonomy, not something Phase 1–3 ever built. `group=type`
   (and any value other than `source`/`topic`) intentionally throws a 400
@@ -125,8 +123,8 @@ docs/plan/ Design docs and implementation plans
   filter (`ingest.js`'s `extractLinks`) — there is deliberately no redundant client-side
   scheme check; if any future code path writes `links.url_original` other than through
   `extractLinks`, this protection would need re-verifying. `INSTAPAPER_URL_TEMPLATE` is a
-  frontend constant (not a `/api/config` endpoint) per the design doc's "or a frontend config
-  constant" option — simpler, no extra route needed. Single-item `read`/`mark-saved` clicks
+  frontend constant (not a `/api/config` endpoint) — simpler, no extra route needed.
+  Single-item `read`/`mark-saved` clicks
   and all four bulk-bar buttons are routed through a shared `runAction()` wrapper that (a)
   serializes actions so a rapid double-click on a *toggle* route can't fire two overlapping
   requests and silently flip the value back to its original state before re-render, and (b)
@@ -140,10 +138,11 @@ docs/plan/ Design docs and implementation plans
   403/connection-reset from the sandbox's egress proxy), so it could only be verified that the
   frontend builds the documented URL correctly and calls `window.open` — not that Instapaper's
   actual edit page accepts these query params or that the browser-session-cookie auth flow
-  described in the design doc really works. **Whoever deploys this for real Tailscale/browser
-  use must manually click "Save to Instapaper" once against the live site before trusting it.**
+  (see "Instapaper save is 100% client-side" above) really works. **Whoever deploys this for
+  real browser use must manually click "Save to Instapaper" once against the live site
+  before trusting it.**
 - **Operational logging (`server/logger.js`, instrumentation in `server/ingest.js`/`server/enrich.js`/
-  `server/index.js`, see `docs/superpowers/specs/2026-07-25-operational-logging-design.md`)**: structured
+  `server/index.js`)**: structured
   JSON logs via winston + winston-daily-rotate-file, `LOG_LEVEL`/`LOG_RETENTION_DAYS`/`LOG_DIR` env vars,
   `data/logs/` gitignored. Two test gotchas worth knowing before touching this: (1) calling winston's
   `.end()` immediately after `.info()`/`.error()` races `winston-daily-rotate-file`'s flush — the write
@@ -153,12 +152,31 @@ docs/plan/ Design docs and implementation plans
   fires — so testing `registerCrashHandlers()` (`server/index.js`) via `process.emit('uncaughtException', ...)`
   doesn't work regardless of the handler's own logic. `server/index.test.js` instead spies on `process.on`
   to capture the real registered listener and invokes it directly. `ingest_completed`/`ingest_failed`
-  deliberately omit an `emailId` field despite the design spec's instrumentation table listing one
-  (dropped when the plan was written) — no correlation key currently ties an `ingest_completed` log line
+  deliberately omit an `emailId` field despite an early instrumentation plan listing one
+  (dropped along the way) — no correlation key currently ties an `ingest_completed` log line
   back to a specific email/DB row; documented as a known follow-up in PR #2, not yet fixed.
+
+- **Docker packaging (`Dockerfile`, `.dockerignore`, `deploy/docker-compose.yml`,
+  `.github/workflows/publish.yml`)**: multi-stage build on `node:22-bookworm-slim` — a
+  glibc base is required, not `-alpine` (musl), since `better-sqlite3` compiles a native
+  addon at install time. The build stage needs `python3 make g++` installed via `apt-get`
+  (bookworm-slim ships with none of them) or `npm ci` fails with a node-gyp "Could not find
+  any Python installation" error; the runtime stage does **not** need these, keep them out
+  of it. There's no `/health` endpoint in the app — the Docker `HEALTHCHECK` and the CI
+  smoke test both reuse `GET /api/links` (same check the README's manual verification step
+  already uses) rather than adding a new route. The deploy host is meant to receive only
+  `deploy/docker-compose.yml` + a filled-in `.env` (from `.env.example`), never a git
+  clone — `docker-compose.yml`'s `image:` should be pinned to a release tag before real use,
+  not left on `:latest`. `publish.yml` triggers on `vX.Y.Z` tag pushes (plus manual
+  `workflow_dispatch`) and pushes to `ghcr.io/<owner>/newsletter-digest`, lowercased (GHCR
+  rejects uppercase in image paths, hence the `tr '[:upper:]' '[:lower:]'` on
+  `github.repository`) — it builds and smoke-tests the image *before* pushing, so a broken
+  image never reaches the registry. No auto-update mechanism (e.g. watchtower) is wired up
+  by design — updates are a manual `docker compose pull && up -d` on the deploy host.
 
 ## Conventions
 
-- Follow the phased implementation plan in `docs/plan/` in order; each phase gets a failing test before implementation.
+- Follow the phased approach reflected in the "Phase notes / gotchas" section above; each
+  phase gets a failing test before implementation.
 - Update this file with new gotchas/decisions as phases complete — keep entries specific ("X silently does Y"), not vague ("be careful with X").
 - AGENTS.md is the authoritative agent directives. Only use agent specific files (CLAUDE.md, GEMINI.md, etc) for directives specific to that agent.
