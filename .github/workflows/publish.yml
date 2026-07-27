@@ -1,0 +1,57 @@
+name: Publish Docker image
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t newsletter-digest:smoke-test .
+
+      - name: Smoke test image
+        run: |
+          docker run --rm -d --name digest-smoke -p 3000:3000 newsletter-digest:smoke-test
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:3000/api/links | grep -q '"groups":\[\]'; then
+              echo "smoke test passed"
+              docker stop digest-smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "smoke test failed: server did not respond as expected"
+          docker logs digest-smoke
+          docker stop digest-smoke
+          exit 1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: meta
+        run: |
+          IMAGE=ghcr.io/${{ github.repository }}
+          IMAGE=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
+          VERSION=${GITHUB_REF_NAME}
+          echo "tags=${IMAGE}:${VERSION},${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
