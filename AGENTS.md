@@ -157,6 +157,24 @@ docs/plan/ Design docs and implementation plans
   (dropped when the plan was written) — no correlation key currently ties an `ingest_completed` log line
   back to a specific email/DB row; documented as a known follow-up in PR #2, not yet fixed.
 
+- **Docker packaging (`Dockerfile`, `.dockerignore`, `deploy/docker-compose.yml`,
+  `.github/workflows/publish.yml`)**: multi-stage build on `node:22-bookworm-slim` — a
+  glibc base is required, not `-alpine` (musl), since `better-sqlite3` compiles a native
+  addon at install time. The build stage needs `python3 make g++` installed via `apt-get`
+  (bookworm-slim ships with none of them) or `npm ci` fails with a node-gyp "Could not find
+  any Python installation" error; the runtime stage does **not** need these, keep them out
+  of it. There's no `/health` endpoint in the app — the Docker `HEALTHCHECK` and the CI
+  smoke test both reuse `GET /api/links` (same check the README's manual verification step
+  already uses) rather than adding a new route. The deploy host is meant to receive only
+  `deploy/docker-compose.yml` + a filled-in `.env` (from `.env.example`), never a git
+  clone — `docker-compose.yml`'s `image:` should be pinned to a release tag before real use,
+  not left on `:latest`. `publish.yml` triggers on `vX.Y.Z` tag pushes (plus manual
+  `workflow_dispatch`) and pushes to `ghcr.io/<owner>/newsletter-digest`, lowercased (GHCR
+  rejects uppercase in image paths, hence the `tr '[:upper:]' '[:lower:]'` on
+  `github.repository`) — it builds and smoke-tests the image *before* pushing, so a broken
+  image never reaches the registry. No auto-update mechanism (e.g. watchtower) is wired up
+  by design — updates are a manual `docker compose pull && up -d` on the deploy host.
+
 ## Conventions
 
 - Follow the phased implementation plan in `docs/plan/` in order; each phase gets a failing test before implementation.

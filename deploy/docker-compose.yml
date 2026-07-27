@@ -1,0 +1,22 @@
+# Deploy-host file. Copy this file and a filled-in .env (see .env.example in the repo)
+# to the deploy host — no git checkout of the source repo is needed.
+#
+# Usage on the deploy host:
+#   docker compose pull
+#   docker compose up -d
+
+services:
+  newsletter-digest:
+    image: ghcr.io/cervantesvive/newsletter-digest:latest # pin to a release tag before going live
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Bind to your Tailscale interface/IP only — this app has no auth layer and must
+      # never be reachable from the open internet. Replace 100.x.x.x with your host's
+      # Tailscale IP, or use "127.0.0.1:3000:3000" plus a reverse proxy/tailscale serve.
+      - "100.x.x.x:3000:3000"
+    volumes:
+      - digest-data:/app/data
+
+volumes:
+  digest-data:

@@ -94,7 +94,42 @@ export LLM_MODEL=gpt-4o-mini
   - [ ] systemd unit that runs `node server/index.js` with `WorkingDirectory` set to the
         repo and `Restart=on-failure`.
   - [ ] `pm2 start server/index.js --name newsletter-digest`
-  - [ ] A Docker container built from this repo, with `data/` mounted as a volume.
+  - [ ] Docker — see [Deploy with Docker](#deploy-with-docker) below, the recommended path
+        for a host that isn't your dev machine.
+
+## Deploy with Docker
+
+This is the recommended way to run this app on a separate host from where you develop it —
+the deploy host only needs Docker, never a git checkout of this repo.
+
+CI (`.github/workflows/publish.yml`) builds and pushes an image to GHCR on every `vX.Y.Z`
+tag push, so pulling `ghcr.io/cervantesvive/newsletter-digest:<tag>` gets you a released
+build with no local build step.
+
+- [ ] On the deploy host, copy just two files from this repo (not the whole repo):
+  - [ ] [`deploy/docker-compose.yml`](deploy/docker-compose.yml)
+  - [ ] [`.env.example`](.env.example) → rename to `.env` and fill in real values (see the
+        Configure section above for what each variable means). This `.env` never gets
+        committed anywhere — it lives only on the deploy host.
+- [ ] Edit `docker-compose.yml`'s `image:` line to pin a real release tag instead of
+      `:latest`, and its `ports:` line to your host's actual Tailscale IP (this app has no
+      auth — see the Prerequisites note above).
+- [ ] Pull and start:
+  ```bash
+  docker compose pull
+  docker compose up -d
+  ```
+- [ ] Confirm it's listening (same check as the non-Docker path):
+  ```bash
+  curl http://<tailscale-ip>:3000/api/links
+  ```
+  Expect `{"groups":[],"totalCount":0,"unreadCount":0}` on a fresh install.
+- [ ] Data (SQLite file + logs) persists in the `digest-data` named volume across
+      `docker compose down`/`up` and image upgrades — it's only lost if you explicitly
+      remove the volume (`docker compose down -v`).
+- [ ] To upgrade: edit the `image:` tag in `docker-compose.yml`, then `docker compose pull
+      && docker compose up -d`. Updates are manual on purpose — nothing auto-updates the
+      running container.
 
 ## Wire up ingestion
 
