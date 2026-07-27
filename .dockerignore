@@ -1,0 +1,14 @@
+.git
+.github
+.hermes
+.remember
+.serena
+.idea
+node_modules
+data
+docs
+*.test.js
+.env
+.env.*
+!.env.example
+npm-debug.log
