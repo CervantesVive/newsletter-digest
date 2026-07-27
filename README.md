@@ -6,8 +6,7 @@ Instapaper, dismiss) from a single feed.
 
 This service does **not** retrieve email itself — something else (e.g. a Hermes-style
 agent, a mail rule, a cron job) needs to `POST` raw MIME emails to it. See
-[`docs/plan/2026-07-25-newsletter-digest-design.md`](docs/plan/2026-07-25-newsletter-digest-design.md)
-for the full architecture, and [`AGENTS.md`](AGENTS.md) for implementation gotchas.
+[`AGENTS.md`](AGENTS.md) for architecture notes and implementation gotchas.
 
 ## Prerequisites
 
