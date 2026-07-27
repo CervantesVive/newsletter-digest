@@ -140,8 +140,8 @@ docs/plan/ Design docs and implementation plans
   403/connection-reset from the sandbox's egress proxy), so it could only be verified that the
   frontend builds the documented URL correctly and calls `window.open` — not that Instapaper's
   actual edit page accepts these query params or that the browser-session-cookie auth flow
-  described in the design doc really works. **Whoever deploys this for real Tailscale/browser
-  use must manually click "Save to Instapaper" once against the live site before trusting it.**
+  described in the design doc really works. **Whoever deploys this for real browser use must
+  manually click "Save to Instapaper" once against the live site before trusting it.**
 - **Operational logging (`server/logger.js`, instrumentation in `server/ingest.js`/`server/enrich.js`/
   `server/index.js`, see `docs/superpowers/specs/2026-07-25-operational-logging-design.md`)**: structured
   JSON logs via winston + winston-daily-rotate-file, `LOG_LEVEL`/`LOG_RETENTION_DAYS`/`LOG_DIR` env vars,

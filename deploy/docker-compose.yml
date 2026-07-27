@@ -11,10 +11,10 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      # Bind to your Tailscale interface/IP only — this app has no auth layer and must
-      # never be reachable from the open internet. Replace 100.x.x.x with your host's
-      # Tailscale IP, or use "127.0.0.1:3000:3000" plus a reverse proxy/tailscale serve.
-      - "100.x.x.x:3000:3000"
+      # There is no auth built into this app — restrict access however fits your
+      # deployment (bind to a specific interface, put it behind a reverse proxy with
+      # auth, a VPN, a firewall rule, etc). Adjust the host-side binding as needed.
+      - "3000:3000"
     volumes:
       - digest-data:/app/data
 

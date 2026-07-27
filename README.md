@@ -15,9 +15,10 @@ for the full architecture, and [`AGENTS.md`](AGENTS.md) for implementation gotch
       `node:test` runner and `better-sqlite3`, which needs a reasonably current Node.
 - [ ] A place to run a long-lived process (this is a single Node process, not serverless —
       a systemd service, `pm2`, Docker container, or similar).
-- [ ] **Network access restricted to trusted clients.** There is no login/auth built in —
-      the app assumes it's only reachable over a private network (e.g. Tailscale). Do not
-      expose it to the open internet as-is.
+- [ ] **A network access plan.** There is no login/auth built in — decide how you'll
+      restrict access before exposing this anywhere (a private network/VPN, a reverse
+      proxy with its own auth, a firewall rule, etc.). This is a deployment detail, not
+      something this app enforces itself.
 - [ ] *(Optional but recommended)* An OpenAI-compatible LLM endpoint (e.g.
       [LiteLLM](https://github.com/BerriAI/litellm)) if you want links summarized/
       categorized. Without one, ingestion and the feed still work — links just stay
@@ -112,7 +113,7 @@ build with no local build step.
         Configure section above for what each variable means). This `.env` never gets
         committed anywhere — it lives only on the deploy host.
 - [ ] Edit `docker-compose.yml`'s `image:` line to pin a real release tag instead of
-      `:latest`, and its `ports:` line to your host's actual Tailscale IP (this app has no
+      `:latest`, and its `ports:` line to match your network access plan (this app has no
       auth — see the Prerequisites note above).
 - [ ] Pull and start:
   ```bash
@@ -121,7 +122,7 @@ build with no local build step.
   ```
 - [ ] Confirm it's listening (same check as the non-Docker path):
   ```bash
-  curl http://<tailscale-ip>:3000/api/links
+  curl http://<host>:3000/api/links
   ```
   Expect `{"groups":[],"totalCount":0,"unreadCount":0}` on a fresh install.
 - [ ] Data (SQLite file + logs) persists in the `digest-data` named volume across
