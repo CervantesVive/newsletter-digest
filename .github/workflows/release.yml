@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   release:
@@ -24,10 +25,24 @@ jobs:
           node-version: 22
       - run: git config user.name "github-actions[bot]" && git config user.email "github-actions[bot]@users.noreply.github.com"
       - id: bump
-        run: |
-          npm version ${{ inputs.bump }} -m "Release v%s"
-          echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
-      - run: git push origin HEAD --follow-tags
-      - run: gh release create "${{ steps.bump.outputs.tag }}" --generate-notes
         env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          npm version "$BUMP" --no-git-tag-version
+          version=$(node -p "require('./package.json').version")
+          branch="release/v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          git checkout -b "$branch"
+          git commit -am "Release v$version"
+          git push origin "$branch"
+      - env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+          BRANCH: ${{ steps.bump.outputs.branch }}
+        run: |
+          gh pr create \
+            --title "Release v$VERSION" \
+            --body "Automated version bump to v$VERSION. Merging this PR triggers tagging and the GitHub release." \
+            --base main \
+            --head "$BRANCH"
