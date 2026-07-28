@@ -1,6 +1,6 @@
 {
   "name": "newsletter-digest",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Newsletter triage app: ingest raw emails, extract/dedupe/categorize/summarize links into a single actionable feed.",
   "main": "server/index.js",
   "type": "commonjs",
