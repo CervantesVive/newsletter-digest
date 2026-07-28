@@ -278,6 +278,61 @@ test('a failure partway through ingestion does not permanently strand the email 
   db.close();
 });
 
+test('ingest extracts richer surrounding summaries and skips footer boilerplate links', async () => {
+  const db = tmpDb();
+  const raw = mime({
+    messageId: '<newsletter-rich@example.com>',
+    subject: 'Node Weekly style digest',
+    html: `
+      <html>
+        <body>
+          <p>
+            Domenic Denicola shared a practical look at his modern agentic coding workflow,
+            including how he structures tools, review loops, and iteration boundaries.
+            <a href="https://example.com/domenic-setup?utm_source=newsletter">Domenic Denicola's Agentic Coding Setup</a>
+          </p>
+          <p>
+            A deep dive into running background jobs reliably in Node.js using queues,
+            worker isolation, and retry semantics in production systems.
+            <a href="https://example.com/background-jobs">Running Background Jobs in Node.js with BullMQ</a>
+          </p>
+          <p><a href="https://nodeweekly.com/leave/abc123">Cancel your subscription</a></p>
+          <p><a href="https://nodeweekly.com/edit_subscription/abc123">change your address</a></p>
+        </body>
+      </html>
+    `,
+  });
+  const { results } = await ingestEmails(db, [{ raw_mime: raw }]);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, 'ingested');
+  const links = db
+    .prepare(
+      `
+      SELECT l.url_normalized, l.headline, ls.extracted_summary
+      FROM links l
+      JOIN link_sources ls ON ls.link_id = l.id
+      ORDER BY l.id
+    `
+    )
+    .all();
+  assert.equal(links.length, 2, 'footer boilerplate links should be skipped');
+  assert.equal(links[0].url_normalized, 'https://example.com/domenic-setup');
+  assert.equal(links[0].headline, "Domenic Denicola's Agentic Coding Setup");
+  assert.match(
+    links[0].extracted_summary,
+    /practical look at his modern agentic coding workflow/i,
+    'should capture surrounding blurb, not just anchor text'
+  );
+  assert.notEqual(
+    links[0].extracted_summary,
+    "Domenic Denicola's Agentic Coding Setup",
+    'summary should be richer than the bare anchor text'
+  );
+  assert.equal(links[1].url_normalized, 'https://example.com/background-jobs');
+  assert.match(links[1].extracted_summary, /running background jobs reliably in node\.js/i);
+  db.close();
+});
+
 test('normalizeUrl strips tracking params, fragment, and trailing slash', () => {
   assert.equal(
     normalizeUrl('https://Example.com/Path/?utm_source=a&utm_medium=b&fbclid=z&keep=1#section'),

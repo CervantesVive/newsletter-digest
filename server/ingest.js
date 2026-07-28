@@ -65,6 +65,15 @@ function fallbackMessageId({ fromAddress, subject, body }) {
   return hash.digest('hex');
 }
 
+// ponytail: deterministic keyword match, not a classifier — extend this list if new
+// newsletter senders show up with other footer/account-management phrasing.
+const BOILERPLATE_PATTERN =
+  /unsubscribe|manage.{0,20}subscription|change your (address|email)|edit.?subscription|cancel.{0,20}subscription|leave.{0,20}(this )?(list|newsletter|subscription)|view (this )?(in|on).{0,10}(browser|web)|web version/i;
+
+function isBoilerplateLink(href, anchorText) {
+  return BOILERPLATE_PATTERN.test(href) || BOILERPLATE_PATTERN.test(anchorText);
+}
+
 function extractLinks(html) {
   if (!html) return [];
   const $ = cheerio.load(html);
@@ -79,11 +88,21 @@ function extractLinks(html) {
       return;
     }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
-    const text = $(el).text().trim();
+    const anchorText = $(el).text().trim();
+    if (isBoilerplateLink(href, anchorText)) return;
+
+    // Prefer the nearest block-level container's text (a <p>/<li>) over the bare
+    // anchor text — newsletter blurbs usually wrap the link in a descriptive sentence.
+    const container = $(el).closest('p, li').first();
+    const containerText = container.length ? container.text().trim().replace(/\s+/g, ' ') : '';
+    const summary =
+      containerText && containerText.length > anchorText.length ? containerText : anchorText;
+
     links.push({
       urlOriginal: href,
       urlNormalized: normalizeUrl(href),
-      extractedSummary: text || null,
+      headline: anchorText || null,
+      extractedSummary: summary || null,
     });
   });
   return links;
@@ -135,7 +154,7 @@ async function ingestOne(db, rawInput) {
 
     const emailId = info.lastInsertRowid;
     for (const link of links) {
-      const linkInfo = insertLink.run(link.urlNormalized, link.urlOriginal, link.extractedSummary);
+      const linkInfo = insertLink.run(link.urlNormalized, link.urlOriginal, link.headline);
       if (linkInfo.changes === 0) dupeLinks += 1;
       const { id: linkId } = selectLink.get(link.urlNormalized);
       insertSource.run(linkId, emailId, link.extractedSummary);

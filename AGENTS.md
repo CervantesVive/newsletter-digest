@@ -63,6 +63,17 @@ data/      SQLite file (gitignored)
   tracking params (`ref`, `fbclid`, `gclid`, etc.), the fragment, and a trailing slash (except
   root `/`) — extend the tracking-param list here if new newsletter senders show up with other
   tracking params, don't scope-creep into a full tracking-param database.
+- **`extractLinks()` boilerplate filter and richer summaries (added post-Phase-6)**: links are
+  now dropped before ever reaching the DB if their href or anchor text matches
+  `BOILERPLATE_PATTERN` (unsubscribe, manage/change/cancel/leave subscription, edit_subscription,
+  view-in-browser/web-version) — this is a deterministic keyword regex, not a classifier, extend
+  the pattern if new senders show new footer phrasing, don't build scoring/ML for it. Each kept
+  link now produces **two distinct strings**: `headline` (bare anchor text, used for `links.headline`
+  seeding — unchanged from before) and `extractedSummary` (the nearest ancestor `<p>`/`<li>` block's
+  full text if it's longer than the anchor text, else falls back to the anchor text — used for
+  `link_sources.extracted_summary`). Previously these were the same value; don't reintroduce that
+  coupling, `ingestOne`'s `insertLink` call must keep using `link.headline`, not
+  `link.extractedSummary`, or headlines will regress to full sentence blurbs.
 - **`links.headline`** is seeded from the anchor's own link text on first-insert only
   (`INSERT OR IGNORE` protects it from being clobbered by later re-mentions of the same
   URL). There's no page-fetching in this app, so anchor text is the only title-like signal
