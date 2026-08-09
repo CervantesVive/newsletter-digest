@@ -106,9 +106,15 @@ CI (`.github/workflows/publish.yml`) builds and pushes an image to GHCR on every
 tag push, so pulling `ghcr.io/cervantesvive/newsletter-digest:<tag>` gets you a released
 build with no local build step.
 
+Repo-first homelab workflow:
+- review tracked deploy files in this repo first
+- preview runtime sync with `deploy/sync-deploy.sh`
+- apply with `deploy/sync-deploy.sh --apply` only after approval
+- then update the live runtime from `/mnt/media/services/newsletter-digest`
+
 - [ ] On the deploy host, copy just two files from this repo (not the whole repo):
   - [ ] [`deploy/docker-compose.yml`](deploy/docker-compose.yml)
-  - [ ] [`.env.example`](.env.example) → rename to `.env` and fill in real values (see the
+  - [ ] [`.env.example`](.env.example) -> rename to `.env` and fill in real values (see the
         Configure section above for what each variable means). This `.env` never gets
         committed anywhere — it lives only on the deploy host.
 - [ ] Edit `docker-compose.yml`'s `image:` line to pin a real release tag instead of

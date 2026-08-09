@@ -5,3 +5,5 @@ data/*.sqlite*
 data/logs/
 node_modules/
 .env
+
+deploy/.env.local
