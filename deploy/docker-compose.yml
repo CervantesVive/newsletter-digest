@@ -17,6 +17,7 @@ services:
       - "3000:3000"
     volumes:
       - digest-data:/app/data
+    mem_limit: 512m
 
 volumes:
   digest-data:
