@@ -14,7 +14,7 @@
     "better-sqlite3": "^13.0.1",
     "cheerio": "^1.2.0",
     "express": "^5.2.1",
-    "mailparser": "^3.9.14",
+    "mailparser": "^3.9.23",
     "openai": "^6.49.0",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0"
